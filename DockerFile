@@ -1,0 +1,23 @@
+# Dockerfile
+FROM python:3.11-slim
+
+# Install ffmpeg (and clean up apt cache)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set workdir
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+# Install the package (no dev deps in the runtime image)
+RUN pip install --upgrade pip \
+    && pip install .
+
+# Default entrypoint is the CLI
+ENTRYPOINT ["subsvc"]
+# Default command: show help if no args
+CMD ["--help"]
