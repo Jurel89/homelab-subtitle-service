@@ -1,0 +1,8 @@
+jobs:
+  - file: "/media/movies/Movie1.mkv"
+    lang: "en"
+  - file: "/media/movies/Movie2.mkv"
+    lang: "en"
+    model: "medium"
+  - file: "/media/shows/Show.S01E01.mkv"
+    output: "/subs/show.S01E01.en.srt"
