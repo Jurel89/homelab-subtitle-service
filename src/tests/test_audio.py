@@ -45,3 +45,17 @@ def test_probe_and_extract(tmp_path):
 
     audio_path = ff.extract_audio_to_wav(video)
     assert audio_path.is_file()
+
+
+def test_ffmpeg_missing(monkeypatch):
+    """Test that FFmpegError is raised when binaries are missing."""
+    # Mock shutil.which to return None (not found)
+    monkeypatch.setattr("shutil.which", lambda x: None)
+
+    ff = FFmpeg()
+
+    # ensure_available should raise FFmpegError
+    with pytest.raises(FFmpegError) as excinfo:
+        ff.ensure_available()
+
+    assert "not found in PATH" in str(excinfo.value)

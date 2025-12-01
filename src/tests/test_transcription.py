@@ -12,6 +12,13 @@ class FakeWhisperSegment:
         self.no_speech_prob = no_speech_prob
 
 
+class FakeWhisperInfo:
+    def __init__(self, language="en", language_probability=0.99, duration=2.0):
+        self.language = language
+        self.language_probability = language_probability
+        self.duration = duration
+
+
 class FakeWhisperModel:
     def __init__(self, *args, **kwargs):
         self.called_with = (args, kwargs)
@@ -21,7 +28,7 @@ class FakeWhisperModel:
             FakeWhisperSegment(0.0, 1.0, "Hello"),
             FakeWhisperSegment(1.0, 2.0, "World"),
         ]
-        info = {}  # we don't use it for now
+        info = FakeWhisperInfo()
         return segments, info
 
 

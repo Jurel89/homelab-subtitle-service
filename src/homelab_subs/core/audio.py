@@ -8,6 +8,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from ..logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 class FFmpegError(RuntimeError):
     """Raised when an ffmpeg/ffprobe command fails or binaries are missing."""
@@ -41,6 +45,7 @@ class FFmpeg:
 
     def _check_binary(self, bin_name: str) -> None:
         if shutil.which(bin_name) is None:
+            logger.error(f"Required binary '{bin_name}' not found in PATH")
             raise FFmpegError(
                 f"Required binary '{bin_name}' not found in PATH.\n"
                 "\n"
@@ -57,8 +62,10 @@ class FFmpeg:
 
         Raises FFmpegError if not found.
         """
+        logger.debug("Checking ffmpeg and ffprobe availability")
         self._check_binary(self.ffmpeg_bin)
         self._check_binary(self.ffprobe_bin)
+        logger.debug("FFmpeg binaries are available")
 
     def _run(self, cmd: list[str]) -> str:
         """
@@ -66,6 +73,7 @@ class FFmpeg:
 
         Raises FFmpegError on failure.
         """
+        logger.debug(f"Running command: {' '.join(cmd)}")
         try:
             result = subprocess.run(
                 cmd,
@@ -74,8 +82,13 @@ class FFmpeg:
                 stderr=subprocess.PIPE,
                 text=True,
             )
+            logger.debug("Command completed successfully")
             return result.stdout
         except subprocess.CalledProcessError as exc:
+            logger.error(
+                f"Command failed with exit code {exc.returncode}",
+                extra={"command": " ".join(cmd), "stderr": exc.stderr},
+            )
             raise FFmpegError(
                 f"Command failed: {' '.join(cmd)}\n"
                 f"Exit code: {exc.returncode}\n"
@@ -108,8 +121,10 @@ class FFmpeg:
         path = Path(path)
 
         if not path.is_file():
+            logger.error(f"Video file not found: {path}")
             raise FileNotFoundError(f"Video file not found: {path}")
 
+        logger.debug(f"Probing video file: {path.name}")
         self.ensure_available()
 
         cmd = [
@@ -143,6 +158,11 @@ class FFmpeg:
                 has_audio = True
             elif codec_type == "video":
                 has_video = True
+
+        logger.debug(
+            f"Video info: duration={duration:.2f}s, has_audio={has_audio}, has_video={has_video}"
+            if duration else f"Video info: has_audio={has_audio}, has_video={has_video}"
+        )
 
         return VideoInfo(
             path=path,
@@ -191,16 +211,20 @@ class FFmpeg:
         video_path = Path(video_path)
 
         if not video_path.is_file():
+            logger.error(f"Video file not found: {video_path}")
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
+        logger.info(f"Extracting audio from {video_path.name}")
         self.ensure_available()
 
         if output_path is None:
             tmp_dir = Path(tempfile.mkdtemp(prefix="homelab_subs_audio_"))
             output_path = tmp_dir / f"{video_path.stem}_audio.wav"
+            logger.debug(f"Using temporary output path: {output_path}")
         else:
             output_path = Path(output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"Using specified output path: {output_path}")
 
         cmd = [
             self.ffmpeg_bin,
@@ -232,9 +256,15 @@ class FFmpeg:
         self._run(cmd)
 
         if not output_path.is_file():
+            logger.error(f"FFmpeg reported success but output file not found: {output_path}")
             raise FFmpegError(
                 f"ffmpeg reported success but output file not found: {output_path}"
             )
+
+        file_size = output_path.stat().st_size
+        logger.info(
+            f"Audio extracted successfully: {output_path.name} ({file_size / (1024 * 1024):.2f} MB)"
+        )
 
         return output_path
 

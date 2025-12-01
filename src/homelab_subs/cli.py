@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,6 +13,9 @@ import yaml
 from .core.audio import FFmpeg, FFmpegError
 from .core.srt import write_srt_file
 from .core.transcription import Transcriber, TranscriberConfig, TranscriptionTask
+from .logging_config import setup_logging, get_logger, log_stage, log_file_info
+
+logger = get_logger(__name__)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -79,6 +83,19 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable VAD filtering (voice activity detection). Enabled by default.",
     )
+    gen.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    gen.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
 
     # ---- batch ----
     batch = subparsers.add_parser(
@@ -89,6 +106,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "config",
         type=Path,
         help="Path to YAML config file describing jobs.",
+    )
+    batch.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    batch.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
     )
 
     return parser
@@ -114,17 +144,31 @@ def _run_generate(
     task: TranscriptionTask,
     beam_size: int,
     vad_filter: bool,
+    job_id: Optional[str] = None,
 ) -> Path:
     """
     End-to-end generation: video -> audio -> transcription -> SRT.
     """
+    if job_id is None:
+        job_id = str(uuid.uuid4())[:8]
+
+    context = {
+        "job_id": job_id,
+        "video_file": str(video_path.name),
+    }
+
+    logger.info(f"Starting subtitle generation for {video_path.name}", extra=context)
+    log_file_info(logger, video_path, context)
+
     ff = FFmpeg()
 
     if output_path is None:
         output_path = _default_output_path(video_path, lang or "auto")
 
     # Extract audio
-    audio_path = ff.extract_audio_to_wav(video_path)
+    with log_stage(logger, "audio_extraction", **context):
+        audio_path = ff.extract_audio_to_wav(video_path)
+        log_file_info(logger, audio_path, context)
 
     # Configure transcriber
     config = TranscriberConfig(
@@ -137,16 +181,31 @@ def _run_generate(
     # If lang is an empty string, treat as auto-detect
     language_param: Optional[str] = lang if lang else None
 
-    segments = transcriber.transcribe_file(
-        audio_path,
-        language=language_param,
-        task=task,
-        beam_size=beam_size,
-        vad_filter=vad_filter,
+    logger.info(
+        f"Transcribing with model={model_name}, device={device}, lang={language_param or 'auto'}",
+        extra={**context, "model": model_name, "device": device, "language": language_param},
     )
 
+    with log_stage(logger, "transcription", **context):
+        segments = transcriber.transcribe_file(
+            audio_path,
+            language=language_param,
+            task=task,
+            beam_size=beam_size,
+            vad_filter=vad_filter,
+        )
+
     # Write SRT
-    return write_srt_file(segments, output_path)
+    with log_stage(logger, "srt_generation", **context):
+        result_path = write_srt_file(segments, output_path)
+        log_file_info(logger, result_path, context)
+
+    logger.info(
+        f"Successfully generated subtitles: {result_path.name}",
+        extra={**context, "output_file": str(result_path)},
+    )
+
+    return result_path
 
 
 def _run_batch(config_path: Path) -> None:
@@ -168,19 +227,32 @@ def _run_batch(config_path: Path) -> None:
     if not config_path.is_file():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
+    logger.info(f"Loading batch configuration from {config_path}")
+
     data: dict[str, Any] = yaml.safe_load(config_path.read_text())
     jobs = data.get("jobs") or []
 
     if not isinstance(jobs, list):
         raise ValueError("Config file must contain a 'jobs' list.")
 
-    for job in jobs:
+    logger.info(f"Found {len(jobs)} job(s) to process")
+
+    successful = 0
+    failed = 0
+
+    for idx, job in enumerate(jobs, start=1):
+        job_id = f"batch_{idx}"
+
         if not isinstance(job, dict):
-            raise ValueError("Each job in 'jobs' must be a mapping/dict.")
+            logger.error(f"Job {idx} is not a valid dictionary, skipping")
+            failed += 1
+            continue
 
         file_path = job.get("file")
         if not file_path:
-            raise ValueError("Job is missing required 'file' field.")
+            logger.error(f"Job {idx} is missing required 'file' field, skipping")
+            failed += 1
+            continue
 
         video = Path(file_path)
         lang = job.get("lang", "en")
@@ -194,24 +266,38 @@ def _run_batch(config_path: Path) -> None:
         output = job.get("output")
         output_path = Path(output) if output else None
 
-        print(f"[subsvc] Processing job for video: {video}")
-        srt_path = _run_generate(
-            video_path=video,
-            output_path=output_path,
-            lang=lang,
-            model_name=model,
-            device=device,
-            compute_type=compute_type,
-            task=task,  # type: ignore[arg-type]
-            beam_size=beam_size,
-            vad_filter=vad_filter,
-        )
-        print(f"[subsvc] -> Created subtitles: {srt_path}")
+        logger.info(f"Processing job {idx}/{len(jobs)}: {video.name}", extra={"job_id": job_id})
+
+        try:
+            srt_path = _run_generate(
+                video_path=video,
+                output_path=output_path,
+                lang=lang,
+                model_name=model,
+                device=device,
+                compute_type=compute_type,
+                task=task,  # type: ignore[arg-type]
+                beam_size=beam_size,
+                vad_filter=vad_filter,
+                job_id=job_id,
+            )
+            logger.info(f"Job {idx} completed successfully: {srt_path}", extra={"job_id": job_id})
+            successful += 1
+        except Exception as exc:
+            logger.error(f"Job {idx} failed: {exc}", extra={"job_id": job_id}, exc_info=True)
+            failed += 1
+
+    logger.info(f"Batch processing complete: {successful} successful, {failed} failed")
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    # Setup logging
+    log_file = getattr(args, "log_file", None)
+    log_level = getattr(args, "log_level", "INFO")
+    setup_logging(level=log_level, log_file=log_file)
 
     try:
         if args.command == "generate":
@@ -226,7 +312,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 beam_size=args.beam_size,
                 vad_filter=not args.no_vad,
             )
-            print(f"[subsvc] Subtitles written to: {srt_path}")
+            logger.info(f"✓ Subtitles written to: {srt_path}")
             return 0
 
         if args.command == "batch":
@@ -237,10 +323,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 1
 
     except (FFmpegError, FileNotFoundError, ValueError) as exc:
-        print(f"[subsvc] Error: {exc}", file=sys.stderr)
+        logger.error(f"Error: {exc}", exc_info=True)
         return 1
     except KeyboardInterrupt:
-        print("[subsvc] Interrupted by user.", file=sys.stderr)
+        logger.warning("Interrupted by user")
         return 1
 
 

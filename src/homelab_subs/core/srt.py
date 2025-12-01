@@ -4,6 +4,9 @@ from pathlib import Path
 from typing import Iterable
 
 from .transcription import Segment
+from ..logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def _format_timestamp(seconds: float) -> str:
@@ -49,6 +52,7 @@ def segments_to_srt(segments: Iterable[Segment]) -> str:
         Full SRT content as a single string, including trailing newline.
     """
     lines: list[str] = []
+    actual_cue_count = 0
 
     for idx, seg in enumerate(segments, start=1):
         start_ts = _format_timestamp(seg.start)
@@ -57,17 +61,22 @@ def segments_to_srt(segments: Iterable[Segment]) -> str:
 
         if not text:
             # Skip empty segments (can happen with VAD / no_speech filters)
+            logger.debug(f"Skipping empty segment {idx}")
             continue
+
+        actual_cue_count += 1
 
         # SRT block:
         # <index>
         # HH:MM:SS,mmm --> HH:MM:SS,mmm
         # text
         #
-        lines.append(str(idx))
+        lines.append(str(actual_cue_count))
         lines.append(f"{start_ts} --> {end_ts}")
         lines.append(text)
         lines.append("")  # blank line between cues
+
+    logger.debug(f"Generated {actual_cue_count} SRT cues")
 
     # Ensure final newline
     return "\n".join(lines) + "\n"
@@ -98,7 +107,12 @@ def write_srt_file(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    logger.debug(f"Writing SRT file to {output_path}")
+
     srt_content = segments_to_srt(segments)
     output_path.write_text(srt_content, encoding=encoding)
+
+    file_size = output_path.stat().st_size
+    logger.info(f"SRT file written: {output_path.name} ({file_size} bytes)")
 
     return output_path

@@ -5,8 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from unittest.mock import MagicMock, patch
 
 from homelab_subs import cli
+from homelab_subs.cli import _run_generate
+from homelab_subs.core.transcription import Segment
 
 
 def test_cli_help(capsys):
@@ -103,3 +106,48 @@ def test_cli_batch_calls_run_batch(monkeypatch, tmp_path, capsys):
     # batch prints per-job logs, but with empty jobs, probably nothing special
     # Just verify it didn't blow up
     assert captured.err == ""
+
+
+def test_run_generate_success(monkeypatch, tmp_path):
+    # Arrange
+    video_path = tmp_path / "video.mp4"
+    video_path.touch()
+    output_path = tmp_path / "output.srt"
+
+    # Mock FFmpeg
+    mock_ffmpeg_cls = MagicMock()
+    mock_ffmpeg_instance = mock_ffmpeg_cls.return_value
+    mock_ffmpeg_instance.extract_audio_to_wav.return_value = Path("/tmp/audio.wav")
+    monkeypatch.setattr("homelab_subs.cli.FFmpeg", mock_ffmpeg_cls)
+
+    # Mock Transcriber
+    mock_transcriber_cls = MagicMock()
+    mock_transcriber_instance = mock_transcriber_cls.return_value
+    mock_transcriber_instance.transcribe_file.return_value = [
+        Segment(index=1, start=0.0, end=1.0, text="Test")
+    ]
+    monkeypatch.setattr("homelab_subs.cli.Transcriber", mock_transcriber_cls)
+
+    # Mock write_srt_file
+    mock_write_srt = MagicMock(return_value=output_path)
+    monkeypatch.setattr("homelab_subs.cli.write_srt_file", mock_write_srt)
+
+    # Act
+    result = _run_generate(
+        video_path=video_path,
+        output_path=output_path,
+        lang="en",
+        model_name="tiny",
+        device="cpu",
+        compute_type="int8",
+        task="transcribe",
+        beam_size=5,
+        vad_filter=True,
+        job_id="test_job",
+    )
+
+    # Assert
+    assert result == output_path
+    mock_ffmpeg_instance.extract_audio_to_wav.assert_called_once_with(video_path)
+    mock_transcriber_instance.transcribe_file.assert_called_once()
+    mock_write_srt.assert_called_once()

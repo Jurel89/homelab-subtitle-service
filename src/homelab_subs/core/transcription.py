@@ -6,6 +6,10 @@ from typing import Iterable, Literal, Optional
 
 from faster_whisper import WhisperModel
 
+from ..logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 TranscriptionTask = Literal["transcribe", "translate"]
 
@@ -70,6 +74,10 @@ class Transcriber:
         Lazily load the Whisper model on first use.
         """
         if self._model is None:
+            logger.info(
+                f"Loading Whisper model: {self.config.model_name} "
+                f"(device={self.config.device}, compute_type={self.config.compute_type})"
+            )
             kwargs = {
                 "device": self.config.device,
                 "compute_type": self.config.compute_type,
@@ -78,6 +86,7 @@ class Transcriber:
                 kwargs["download_root"] = self.config.download_root
 
             self._model = WhisperModel(self.config.model_name, **kwargs)
+            logger.info("Whisper model loaded successfully")
 
         return self._model
 
@@ -123,12 +132,18 @@ class Transcriber:
         audio_path = Path(audio_path)
 
         if not audio_path.is_file():
+            logger.error(f"Audio file not found: {audio_path}")
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        logger.info(
+            f"Starting transcription of {audio_path.name} "
+            f"(lang={language or 'auto'}, task={task}, beam_size={beam_size}, vad={vad_filter})"
+        )
 
         model = self._ensure_model_loaded()
 
         # faster-whisper returns (segments_generator, info)
-        segments_iter, _info = model.transcribe(
+        segments_iter, info = model.transcribe(
             str(audio_path),
             language=language,
             task=task,
@@ -136,7 +151,16 @@ class Transcriber:
             vad_filter=vad_filter,
         )
 
-        return list(self._segments_from_iterable(segments_iter))
+        logger.debug(
+            f"Transcription info: language={info.language}, "
+            f"language_probability={info.language_probability:.4f}, "
+            f"duration={info.duration:.2f}s"
+        )
+
+        segments = list(self._segments_from_iterable(segments_iter))
+        logger.info(f"Transcription complete: {len(segments)} segments generated")
+
+        return segments
 
     # ---------- helpers for shaping output ----------
 
@@ -144,9 +168,14 @@ class Transcriber:
         """
         Convert faster-whisper segments into our Segment dataclass objects.
         """
+        segment_count = 0
         for idx, seg in enumerate(segments_iter, start=1):
             # `seg` is a faster_whisper.transcribe.Segment object
             # with attributes: start, end, text, avg_logprob, no_speech_prob, etc.
+            segment_count += 1
+            if segment_count % 50 == 0:
+                logger.debug(f"Processed {segment_count} segments...")
+            
             yield Segment(
                 index=idx,
                 start=float(seg.start),
