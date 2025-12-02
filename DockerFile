@@ -1,10 +1,11 @@
 # Dockerfile
 FROM python:3.11-slim
 
-# Install ffmpeg with pinned version and clean up apt cache
-# DL3008: Pin versions for reproducibility and security
+# Install ffmpeg and clean up apt cache
+# Note: Pinning specific ffmpeg version is not reliable due to Debian repository changes
+# Using latest available version from repository for security updates
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg=7:5.1.6-0+deb12u1 \
+    && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Set workdir
