@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
+import subprocess  # nosec B404 - subprocess used safely with check=True and validated commands
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,6 +75,7 @@ class FFmpeg:
         """
         logger.debug(f"Running command: {' '.join(cmd)}")
         try:
+            # nosec B603 - Commands are constructed internally from validated paths/args, not user input
             result = subprocess.run(
                 cmd,
                 check=True,

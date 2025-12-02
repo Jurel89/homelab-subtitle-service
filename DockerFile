@@ -1,9 +1,10 @@
 # Dockerfile
 FROM python:3.11-slim
 
-# Install ffmpeg (and clean up apt cache)
+# Install ffmpeg with pinned version and clean up apt cache
+# DL3008: Pin versions for reproducibility and security
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg=7:5.1.6-0+deb12u1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set workdir
@@ -13,11 +14,14 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 
-# Install the package (no dev deps in the runtime image)
-RUN pip install --upgrade pip \
-    && pip install .
+# Install the package with pinned pip version and no cache
+# DL3013: Pin pip version for reproducibility
+# DL3042: Use --no-cache-dir to reduce image size
+RUN pip install --no-cache-dir --upgrade pip==25.0.1 \
+    && pip install --no-cache-dir .
 
 # Default entrypoint is the CLI
 ENTRYPOINT ["subsvc"]
 # Default command: show help if no args
 CMD ["--help"]
+

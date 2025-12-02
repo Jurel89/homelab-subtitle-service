@@ -193,8 +193,10 @@ class Transcriber:
                     if progress_callback:
                         try:
                             progress_callback(pct, idx)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # Intentionally catching all exceptions to prevent callback errors
+                            # from breaking transcription. Log for debugging but continue.
+                            logger.debug(f"Progress callback error: {e}")
                     # Also emit JSON-friendly log for web UI consumers (stage is injected by log_stage when present)
                     logger.info(
                         f"Transcription progress: {pct:.1f}%",

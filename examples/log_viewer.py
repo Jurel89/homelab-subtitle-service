@@ -403,6 +403,10 @@ def index():
         "failed": sum(1 for j in jobs.values() if j["status"] == "failed"),
     }
     
+    # Using render_template_string is safe here because DASHBOARD_TEMPLATE is a constant
+    # and not derived from user input. Semgrep flags this as a potential SSTI vulnerability,
+    # but it's a false positive in this context.
+    # nosemgrep: python.flask.security.audit.render-template-string.render-template-string
     return render_template_string(
         DASHBOARD_TEMPLATE,
         jobs=list(jobs.values()),
