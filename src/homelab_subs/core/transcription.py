@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal, Optional
+from typing import Callable, Iterable, Literal, Optional
 
 from faster_whisper import WhisperModel
 
@@ -99,6 +99,7 @@ class Transcriber:
         task: TranscriptionTask = "transcribe",
         beam_size: int = 5,
         vad_filter: bool = True,
+        progress_callback: Optional[Callable[[float, int], None]] = None,
     ) -> list[Segment]:
         """
         Transcribe an audio file into a list of segments.
@@ -150,14 +151,56 @@ class Transcriber:
             beam_size=beam_size,
             vad_filter=vad_filter,
         )
+        
+        # Info may be an object or dict; try to read duration for progress computation
+        info_duration = getattr(info, "duration", None)
+        if info_duration is None and isinstance(info, dict):
+            info_duration = info.get("duration")
+        try:
+            logger.debug(
+                f"Transcription info: language={getattr(info, 'language', None)}, "
+                f"language_probability={getattr(info, 'language_probability', 0.0):.4f}, "
+                f"duration={(info_duration or 0):.2f}s"
+            )
+        except Exception:
+            logger.debug("Transcription info available")
 
-        logger.debug(
-            f"Transcription info: language={info.language}, "
-            f"language_probability={info.language_probability:.4f}, "
-            f"duration={info.duration:.2f}s"
-        )
+        # Iterate, shape segments, and report progress
+        segments: list[Segment] = []
+        total_duration = float(info_duration) if info_duration else None
+        last_pct = -1
+        for idx, seg in enumerate(segments_iter, start=1):
+            start = float(getattr(seg, "start", 0.0))
+            end = float(getattr(seg, "end", start))
+            text = str(getattr(seg, "text", "")).strip()
+            avg_logprob = getattr(seg, "avg_logprob", None)
+            no_speech_prob = getattr(seg, "no_speech_prob", None)
 
-        segments = list(self._segments_from_iterable(segments_iter))
+            segments.append(
+                Segment(
+                    index=idx,
+                    start=start,
+                    end=end,
+                    text=text,
+                    avg_logprob=avg_logprob,
+                    no_speech_prob=no_speech_prob,
+                )
+            )
+
+            if total_duration and total_duration > 0:
+                pct = max(0.0, min(100.0, (end / total_duration) * 100.0))
+                if int(pct) != int(last_pct):
+                    if progress_callback:
+                        try:
+                            progress_callback(pct, idx)
+                        except Exception:
+                            pass
+                    # Also emit JSON-friendly log for web UI consumers (stage is injected by log_stage when present)
+                    logger.info(
+                        f"Transcription progress: {pct:.1f}%",
+                        extra={"progress": pct}
+                    )
+                    last_pct = pct
         logger.info(f"Transcription complete: {len(segments)} segments generated")
 
         return segments

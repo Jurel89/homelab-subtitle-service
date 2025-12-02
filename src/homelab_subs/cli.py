@@ -6,6 +6,7 @@ import argparse
 import sys
 import uuid
 from pathlib import Path
+from tqdm import tqdm
 from typing import Any, Optional
 
 import yaml
@@ -187,13 +188,30 @@ def _run_generate(
     )
 
     with log_stage(logger, "transcription", **context):
+        # Create a progress bar that goes from 0 to 100%
+        pbar = tqdm(total=100, unit="%", desc="Transcribing", leave=True)
+
+        def progress_cb(pct: float, count: int) -> None:
+            # Update CLI progress bar
+            pbar.n = int(pct)
+            pbar.refresh()
+            # Also log JSON-friendly progress for web UI (stage is injected by log_stage)
+            logger.info(
+                f"CLI progress: {pct:.1f}%",
+                extra={**context, "progress": pct, "segment_count": count}
+            )
+
         segments = transcriber.transcribe_file(
             audio_path,
             language=language_param,
             task=task,
             beam_size=beam_size,
             vad_filter=vad_filter,
+            progress_callback=progress_cb,
         )
+        pbar.n = 100
+        pbar.refresh()
+        pbar.close()
 
     # Write SRT
     with log_stage(logger, "srt_generation", **context):
