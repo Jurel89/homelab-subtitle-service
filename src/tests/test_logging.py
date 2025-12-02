@@ -4,12 +4,8 @@ Tests for the logging configuration module.
 This tests the logging infrastructure without needing actual video files.
 """
 
-from pathlib import Path
-import tempfile
 import json
 import time
-
-import pytest
 
 from homelab_subs.logging_config import (
     setup_logging,

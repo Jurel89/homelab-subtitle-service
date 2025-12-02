@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from homelab_subs.core.srt import _format_timestamp, segments_to_srt, write_srt_file
 from homelab_subs.core.transcription import Segment
 

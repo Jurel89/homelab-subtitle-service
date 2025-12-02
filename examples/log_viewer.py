@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from datetime import datetime
 from typing import List, Dict, Any
 
 try:
@@ -457,7 +456,7 @@ def main():
     global LOG_FILE_PATH
     LOG_FILE_PATH = args.log_file
     
-    print(f"Starting log viewer...")
+    print("Starting log viewer...")
     print(f"Log file: {LOG_FILE_PATH}")
     print(f"Dashboard: http://{args.host}:{args.port}")
     print(f"API Logs: http://{args.host}:{args.port}/api/logs")

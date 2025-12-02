@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from homelab_subs.core.transcription import Transcriber, TranscriberConfig, Segment
 
 

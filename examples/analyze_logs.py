@@ -12,7 +12,6 @@ import json
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
-from datetime import datetime
 
 
 def load_logs(log_file: Path) -> List[Dict[str, Any]]:
