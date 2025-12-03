@@ -1,17 +1,10 @@
-name: Security & Quality Analysis
-
-# This workflow runs on all branches (except main, which uses pr-validation.yml and main-build.yml)
-# Use this for quick feedback during development on feature branches
+name: PR Validation
 
 on:
-  push:
-    branches:
-      - '**'  # Run on all branches
-      - '!main'  # Except main (handled by main-build.yml)
   pull_request:
     branches:
-      - '**'
-      - '!main'  # PRs to main use pr-validation.yml
+      - main
+    types: [opened, synchronize, reopened]
 
 jobs:
   code-quality:
@@ -34,16 +27,19 @@ jobs:
       - name: Run Ruff linter
         run: |
           ruff check . --output-format=github
-        continue-on-error: true
 
       - name: Run Ruff formatter check
         run: |
           ruff format --check .
-        continue-on-error: true
 
       - name: Run tests with coverage
         run: |
           python -m pytest -m "not integration" --cov=homelab_subs --cov-report=xml --cov-report=term --cov-report=html
+
+      - name: Check test coverage threshold
+        run: |
+          python -m pytest -m "not integration" --cov=homelab_subs --cov-report=term --cov-fail-under=60
+        continue-on-error: true
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -72,7 +68,6 @@ jobs:
         run: |
           bandit -r src/homelab_subs -f json -o bandit-report.json
           bandit -r src/homelab_subs -f screen
-        continue-on-error: true
 
       - name: Run Safety dependency check
         run: |
@@ -100,9 +95,8 @@ jobs:
 
       - name: Run Semgrep
         run: |
-          semgrep scan --config auto --json --output semgrep-report.json || true
-          semgrep scan --config auto || true
-        continue-on-error: true
+          semgrep scan --config auto --json --output semgrep-report.json
+          semgrep scan --config auto
 
       - name: Upload Semgrep report
         if: always()
@@ -122,10 +116,9 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: DockerFile
-          failure-threshold: warning
+          failure-threshold: error
           format: sarif
           output-file: hadolint-report.sarif
-        continue-on-error: true
 
       - name: Upload Hadolint report
         if: always()
@@ -137,16 +130,17 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
+      - name: Build Docker image (validation only)
         run: |
-          docker build -t homelab-subtitle-service:test -f DockerFile .
+          docker build -t homelab-subtitle-service:pr-${{ github.event.pull_request.number }} -f DockerFile .
 
       - name: Run Trivy vulnerability scanner on image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: homelab-subtitle-service:test
+          image-ref: homelab-subtitle-service:pr-${{ github.event.pull_request.number }}
           format: 'sarif'
           output: 'trivy-image-report.sarif'
+          severity: 'CRITICAL,HIGH'
         continue-on-error: true
 
       - name: Run Trivy filesystem scanner
@@ -156,6 +150,7 @@ jobs:
           scan-ref: '.'
           format: 'sarif'
           output: 'trivy-fs-report.sarif'
+          severity: 'CRITICAL,HIGH'
         continue-on-error: true
 
       - name: Upload Trivy reports
@@ -167,8 +162,8 @@ jobs:
             trivy-image-report.sarif
             trivy-fs-report.sarif
 
-  summary:
-    name: Generate Security Summary
+  pr-summary:
+    name: PR Summary
     runs-on: ubuntu-latest
     needs: [code-quality, security-python, semgrep, docker-security]
     if: always()
@@ -181,16 +176,20 @@ jobs:
         with:
           path: security-reports
 
-      - name: Create summary
+      - name: Create PR summary
         run: |
-          echo "## 🔒 Security & Quality Analysis Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔍 PR Validation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ✅ Completed Scans" >> $GITHUB_STEP_SUMMARY
-          echo "- Ruff (Code Quality & Formatting)" >> $GITHUB_STEP_SUMMARY
-          echo "- Bandit (Python Security)" >> $GITHUB_STEP_SUMMARY
-          echo "- Safety (Dependency Vulnerabilities)" >> $GITHUB_STEP_SUMMARY
-          echo "- Semgrep (Static Analysis)" >> $GITHUB_STEP_SUMMARY
-          echo "- Trivy (Docker & Filesystem)" >> $GITHUB_STEP_SUMMARY
-          echo "- Hadolint (Dockerfile Best Practices)" >> $GITHUB_STEP_SUMMARY
+          echo "### Pull Request: #${{ github.event.pull_request.number }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.head_ref }}\` → \`${{ github.base_ref }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📊 Download detailed reports from the artifacts section above." >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Validation Checks" >> $GITHUB_STEP_SUMMARY
+          echo "- ✓ Code Quality (Ruff)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✓ Unit Tests & Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "- ✓ Security Scanning (Bandit, Safety)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✓ Static Analysis (Semgrep)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✓ Docker Build & Security (Trivy, Hadolint)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 Download detailed reports from the artifacts section." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 **Ready for review!** All validation checks completed." >> $GITHUB_STEP_SUMMARY
