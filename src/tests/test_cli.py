@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 from homelab_subs import cli
 from homelab_subs.cli import _run_generate
-from homelab_subs.core.transcription import Segment
 
 
 def test_cli_help(capsys):
@@ -29,27 +28,9 @@ def test_cli_generate_calls_run_generate(monkeypatch, tmp_path, capsys):
 
     called = {}
 
-    def fake_run_generate(
-        video_path,
-        output_path,
-        lang,
-        model_name,
-        device,
-        compute_type,
-        task,
-        beam_size,
-        vad_filter,
-    ):
+    def fake_run_generate(**kwargs):
         # Record the arguments so we can assert on them
-        called["video_path"] = video_path
-        called["output_path"] = output_path
-        called["lang"] = lang
-        called["model_name"] = model_name
-        called["device"] = device
-        called["compute_type"] = compute_type
-        called["task"] = task
-        called["beam_size"] = beam_size
-        called["vad_filter"] = vad_filter
+        called.update(kwargs)
         return Path("/fake/output.srt")
 
     # Monkeypatch the internal helper
@@ -109,30 +90,29 @@ def test_cli_batch_calls_run_batch(monkeypatch, tmp_path, capsys):
 
 
 def test_run_generate_success(monkeypatch, tmp_path):
-    # Arrange
     video_path = tmp_path / "video.mp4"
     video_path.touch()
     output_path = tmp_path / "output.srt"
 
-    # Mock FFmpeg
-    mock_ffmpeg_cls = MagicMock()
-    mock_ffmpeg_instance = mock_ffmpeg_cls.return_value
-    mock_ffmpeg_instance.extract_audio_to_wav.return_value = Path("/tmp/audio.wav")
-    monkeypatch.setattr("homelab_subs.cli.FFmpeg", mock_ffmpeg_cls)
+    mock_service_cls = MagicMock()
+    mock_service_instance = mock_service_cls.return_value
+    mock_service_instance.generate_subtitles.return_value = output_path
+    mock_service_instance.monitoring_available = True
+    mock_service_instance.db_logging_available = True
+    monkeypatch.setattr("homelab_subs.cli.JobService", mock_service_cls)
 
-    # Mock Transcriber
-    mock_transcriber_cls = MagicMock()
-    mock_transcriber_instance = mock_transcriber_cls.return_value
-    mock_transcriber_instance.transcribe_file.return_value = [
-        Segment(index=1, start=0.0, end=1.0, text="Test")
-    ]
-    monkeypatch.setattr("homelab_subs.cli.Transcriber", mock_transcriber_cls)
+    class DummyPBar:
+        def __init__(self):
+            self.n = 0
 
-    # Mock write_srt_file
-    mock_write_srt = MagicMock(return_value=output_path)
-    monkeypatch.setattr("homelab_subs.cli.write_srt_file", mock_write_srt)
+        def refresh(self):
+            pass
 
-    # Act
+        def close(self):
+            pass
+
+    monkeypatch.setattr("homelab_subs.cli.tqdm", lambda *args, **kwargs: DummyPBar())
+
     result = _run_generate(
         video_path=video_path,
         output_path=output_path,
@@ -146,8 +126,9 @@ def test_run_generate_success(monkeypatch, tmp_path):
         job_id="test_job",
     )
 
-    # Assert
     assert result == output_path
-    mock_ffmpeg_instance.extract_audio_to_wav.assert_called_once_with(video_path)
-    mock_transcriber_instance.transcribe_file.assert_called_once()
-    mock_write_srt.assert_called_once()
+    mock_service_instance.generate_subtitles.assert_called_once()
+    kwargs = mock_service_instance.generate_subtitles.call_args.kwargs
+    assert kwargs["video_path"] == video_path
+    assert kwargs["output_path"] == output_path
+    assert callable(kwargs["progress_callback"])

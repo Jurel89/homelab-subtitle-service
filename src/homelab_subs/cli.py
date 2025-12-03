@@ -5,15 +5,15 @@ from __future__ import annotations
 import argparse
 import uuid
 from pathlib import Path
-from tqdm import tqdm
 from typing import Any, Optional
 
+from tqdm import tqdm
 import yaml
 
-from .core.audio import FFmpeg, FFmpegError
-from .core.srt import write_srt_file
-from .core.transcription import Transcriber, TranscriberConfig, TranscriptionTask
-from .logging_config import setup_logging, get_logger, log_stage, log_file_info
+from .core.audio import FFmpegError
+from .core.transcription import TranscriptionTask
+from .logging_config import setup_logging, get_logger, log_file_info
+from .services.job_service import JobService
 
 logger = get_logger(__name__)
 
@@ -96,6 +96,24 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional log file path for JSON-formatted logs",
     )
+    gen.add_argument(
+        "--no-monitoring",
+        dest="enable_monitoring",
+        action="store_false",
+        help="Disable performance monitoring (CPU, memory, GPU tracking)",
+    )
+    gen.add_argument(
+        "--no-db-logging",
+        dest="enable_db_logging",
+        action="store_false",
+        help="Disable database logging (job history and metrics storage)",
+    )
+    gen.add_argument(
+        "--db-path",
+        dest="db_path",
+        type=Path,
+        help="Custom database path (default: ~/.homelab-subs/logs.db)",
+    )
 
     # ---- batch ----
     batch = subparsers.add_parser(
@@ -119,6 +137,39 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="log_file",
         type=Path,
         help="Optional log file path for JSON-formatted logs",
+    )
+
+    # ---- history ----
+    history = subparsers.add_parser(
+        "history",
+        help="View job history and statistics from database logs.",
+    )
+    history.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Number of recent jobs to display (default: 20)",
+    )
+    history.add_argument(
+        "--status",
+        choices=["pending", "running", "completed", "failed"],
+        help="Filter jobs by status",
+    )
+    history.add_argument(
+        "--db-path",
+        dest="db_path",
+        type=Path,
+        help="Custom database path (default: ~/.homelab-subs/logs.db)",
+    )
+    history.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show overall statistics instead of job list",
+    )
+    history.add_argument(
+        "--job-id",
+        dest="job_id",
+        help="Show detailed metrics for a specific job ID",
     )
 
     return parser
@@ -145,9 +196,12 @@ def _run_generate(
     beam_size: int,
     vad_filter: bool,
     job_id: Optional[str] = None,
+    enable_monitoring: bool = True,
+    enable_db_logging: bool = True,
+    db_path: Optional[Path] = None,
 ) -> Path:
     """
-    End-to-end generation: video -> audio -> transcription -> SRT.
+    End-to-end generation driven by the JobService orchestrator.
     """
     if job_id is None:
         job_id = str(uuid.uuid4())[:8]
@@ -160,69 +214,61 @@ def _run_generate(
     logger.info(f"Starting subtitle generation for {video_path.name}", extra=context)
     log_file_info(logger, video_path, context)
 
-    ff = FFmpeg()
-
     if output_path is None:
         output_path = _default_output_path(video_path, lang or "auto")
 
-    # Extract audio
-    with log_stage(logger, "audio_extraction", **context):
-        audio_path = ff.extract_audio_to_wav(video_path)
-        log_file_info(logger, audio_path, context)
-
-    # Configure transcriber
-    config = TranscriberConfig(
-        model_name=model_name,
-        device=device,
-        compute_type=compute_type,
+    service = JobService(
+        enable_monitoring=enable_monitoring,
+        enable_db_logging=enable_db_logging,
+        db_path=db_path,
     )
-    transcriber = Transcriber(config=config)
 
-    # If lang is an empty string, treat as auto-detect
+    if enable_monitoring and not service.monitoring_available:
+        logger.warning(
+            "Monitoring requested but dependencies not installed. "
+            "Install with: pip install psutil nvidia-ml-py"
+        )
+
+    if enable_db_logging and not service.db_logging_available:
+        logger.warning(
+            "Database logging requested but dependencies unavailable. Logs will not be recorded."
+        )
+
     language_param: Optional[str] = lang if lang else None
 
-    logger.info(
-        f"Transcribing with model={model_name}, device={device}, lang={language_param or 'auto'}",
-        extra={**context, "model": model_name, "device": device, "language": language_param},
-    )
+    pbar = tqdm(total=100, unit="%", desc="Transcribing", leave=True)
 
-    with log_stage(logger, "transcription", **context):
-        # Create a progress bar that goes from 0 to 100%
-        pbar = tqdm(total=100, unit="%", desc="Transcribing", leave=True)
+    def progress_cb(pct: float, count: int) -> None:
+        pbar.n = int(pct)
+        pbar.refresh()
+        logger.info(
+            f"CLI progress: {pct:.1f}%",
+            extra={**context, "progress": pct, "segment_count": count},
+        )
 
-        def progress_cb(pct: float, count: int) -> None:
-            # Update CLI progress bar
-            pbar.n = int(pct)
-            pbar.refresh()
-            # Also log JSON-friendly progress for web UI (stage is injected by log_stage)
-            logger.info(
-                f"CLI progress: {pct:.1f}%",
-                extra={**context, "progress": pct, "segment_count": count}
-            )
-
-        segments = transcriber.transcribe_file(
-            audio_path,
-            language=language_param,
+    try:
+        result_path = service.generate_subtitles(
+            video_path=video_path,
+            output_path=output_path,
+            lang=language_param,
+            model_name=model_name,
+            device=device,
+            compute_type=compute_type,
             task=task,
             beam_size=beam_size,
             vad_filter=vad_filter,
+            job_id=job_id,
             progress_callback=progress_cb,
         )
         pbar.n = 100
         pbar.refresh()
+        logger.info(
+            f"Successfully generated subtitles: {result_path.name}",
+            extra={**context, "output_file": str(result_path)},
+        )
+        return result_path
+    finally:
         pbar.close()
-
-    # Write SRT
-    with log_stage(logger, "srt_generation", **context):
-        result_path = write_srt_file(segments, output_path)
-        log_file_info(logger, result_path, context)
-
-    logger.info(
-        f"Successfully generated subtitles: {result_path.name}",
-        extra={**context, "output_file": str(result_path)},
-    )
-
-    return result_path
 
 
 def _run_batch(config_path: Path) -> None:
@@ -307,6 +353,138 @@ def _run_batch(config_path: Path) -> None:
     logger.info(f"Batch processing complete: {successful} successful, {failed} failed")
 
 
+def _run_history(
+    limit: int = 20,
+    status: Optional[str] = None,
+    db_path: Optional[Path] = None,
+    show_stats: bool = False,
+    job_id: Optional[str] = None,
+) -> None:
+    """
+    Display job history and statistics from database logs.
+    """
+    service = JobService(
+        enable_monitoring=False,
+        enable_db_logging=True,
+        db_path=db_path,
+    )
+
+    try:
+        if job_id:
+            details = service.get_job_details(job_id)
+            if details is None:
+                logger.error(f"Job not found: {job_id}")
+                return
+
+            job = details["job"]
+            metrics = details["metrics"]
+
+            print(f"\n{'='*80}")
+            print(f"Job Details: {job_id}")
+            print(f"{'='*80}")
+            print(f"Video:      {job.video_path}")
+            print(f"Output:     {job.output_path}")
+            print(f"Status:     {job.status}")
+            print(f"Language:   {job.language}")
+            print(f"Model:      {job.model}")
+            print(f"Task:       {job.task}")
+            print(f"Started:    {job.started_at}")
+            print(f"Completed:  {job.completed_at or 'N/A'}")
+            print(f"Duration:   {job.duration_seconds:.2f}s" if job.duration_seconds else "Duration:   N/A")
+
+            if job.error_message:
+                print(f"Error:      {job.error_message}")
+
+            print(f"\n{'='*80}")
+            print("Performance Summary")
+            print(f"{'='*80}")
+            print(f"CPU Avg:    {job.cpu_avg:.1f}%" if job.cpu_avg else "CPU Avg:    N/A")
+            print(f"CPU Max:    {job.cpu_max:.1f}%" if job.cpu_max else "CPU Max:    N/A")
+            print(f"Memory Avg: {job.memory_avg_mb:.1f} MB" if job.memory_avg_mb else "Memory Avg: N/A")
+            print(f"Memory Max: {job.memory_max_mb:.1f} MB" if job.memory_max_mb else "Memory Max: N/A")
+            print(f"GPU Avg:    {job.gpu_avg:.1f}%" if job.gpu_avg else "GPU Avg:    N/A")
+            print(f"GPU Max:    {job.gpu_max:.1f}%" if job.gpu_max else "GPU Max:    N/A")
+
+            if metrics:
+                print(f"\n{'='*80}")
+                print(f"Metrics Timeline ({len(metrics)} samples)")
+                print(f"{'='*80}")
+                print(f"{'Time':>8} | {'CPU%':>6} | {'Memory%':>8} | {'GPU%':>6} | {'GPU Mem MB':>10}")
+                print(f"{'-'*8}-+-{'-'*6}-+-{'-'*8}-+-{'-'*6}-+-{'-'*10}")
+
+                for i, m in enumerate(metrics):
+                    if i >= 10:
+                        print(f"... ({len(metrics) - 10} more samples)")
+                        break
+                    time_str = m.timestamp.strftime("%H:%M:%S")
+                    gpu_str = f"{m.gpu_utilization:>6.1f}" if m.gpu_utilization else "   N/A"
+                    gpu_mem_str = f"{m.gpu_memory_used_mb:>10.1f}" if m.gpu_memory_used_mb else "       N/A"
+                    print(
+                        f"{time_str} | {m.cpu_percent:>6.1f} | {m.memory_percent:>8.1f} | {gpu_str} | {gpu_mem_str}"
+                    )
+
+            print()
+            return
+
+        if show_stats:
+            stats = service.get_statistics()
+
+            print(f"\n{'='*80}")
+            print("Overall Statistics")
+            print(f"{'='*80}")
+            print(f"Total Jobs: {stats['total_jobs']}")
+            print(f"\nStatus Breakdown:")
+            for status_name, count in stats["status_counts"].items():
+                print(f"  {status_name:12} : {count:>5}")
+
+            if stats["avg_duration_seconds"]:
+                print(f"\nDuration:")
+                print(f"  Average: {stats['avg_duration_seconds']:.2f}s")
+                print(f"  Min:     {stats['min_duration_seconds']:.2f}s")
+                print(f"  Max:     {stats['max_duration_seconds']:.2f}s")
+
+            if stats["avg_cpu_percent"]:
+                print(f"\nPerformance Averages:")
+                print(f"  CPU:    {stats['avg_cpu_percent']:.1f}%")
+                print(f"  Memory: {stats['avg_memory_mb']:.1f} MB")
+                if stats["avg_gpu_percent"]:
+                    print(f"  GPU:    {stats['avg_gpu_percent']:.1f}%")
+
+            print()
+            return
+
+        jobs = service.get_recent_jobs(limit=limit, status=status)
+
+        if not jobs:
+            print(f"\nNo jobs found{' with status: ' + status if status else ''}.")
+            return
+
+        print(f"\n{'='*120}")
+        print(f"Recent Jobs ({len(jobs)}{' with status: ' + status if status else ''})")
+        print(f"{'='*120}")
+        print(f"{'Job ID':>10} | {'Status':>10} | {'Video':45} | {'Duration':>10} | {'CPU Avg':>8} | {'Mem Avg':>9}")
+        print(f"{'-'*10}-+-{'-'*10}-+-{'-'*45}-+-{'-'*10}-+-{'-'*8}-+-{'-'*9}")
+
+        for job in jobs:
+            video_name = Path(job.video_path).name
+            if len(video_name) > 45:
+                video_name = video_name[:42] + "..."
+
+            duration_str = f"{job.duration_seconds:.2f}s" if job.duration_seconds else "N/A"
+            cpu_str = f"{job.cpu_avg:.1f}%" if job.cpu_avg else "N/A"
+            mem_str = f"{job.memory_avg_mb:.0f} MB" if job.memory_avg_mb else "N/A"
+
+            print(
+                f"{job.job_id:>10} | {job.status:>10} | {video_name:45} | {duration_str:>10} | {cpu_str:>8} | {mem_str:>9}"
+            )
+
+        print(f"\nUse 'subsvc history --job-id <id>' to see detailed metrics for a specific job.")
+        print()
+
+    except RuntimeError as exc:
+        logger.error(str(exc))
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -328,12 +506,25 @@ def main(argv: Optional[list[str]] = None) -> int:
                 task=args.task,
                 beam_size=args.beam_size,
                 vad_filter=not args.no_vad,
+                enable_monitoring=args.enable_monitoring,
+                enable_db_logging=args.enable_db_logging,
+                db_path=args.db_path,
             )
             logger.info(f"✓ Subtitles written to: {srt_path}")
             return 0
 
         if args.command == "batch":
             _run_batch(args.config)
+            return 0
+
+        if args.command == "history":
+            _run_history(
+                limit=args.limit,
+                status=args.status,
+                db_path=args.db_path,
+                show_stats=args.stats,
+                job_id=args.job_id,
+            )
             return 0
 
         parser.error(f"Unknown command: {args.command}")

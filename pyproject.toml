@@ -27,6 +27,12 @@ dependencies = [
   "faster-whisper>=1.0.0",
   # For batch config files (YAML)
   "PyYAML>=6.0.0",
+  # For progress bars
+  "tqdm>=4.65.0",
+  # For system resource monitoring
+  "psutil>=5.9.0",
+  # For GPU monitoring (optional, will be checked at runtime)
+  "nvidia-ml-py>=12.535.0;platform_system=='Linux'",
 ]
 
 [project.optional-dependencies]
