@@ -25,7 +25,7 @@ def test_database_logger_initialization(temp_db):
     """Test DatabaseLogger initialization creates tables."""
     from homelab_subs.core.db_logger import DatabaseLogger
 
-    db_logger = DatabaseLogger(temp_db)
+    DatabaseLogger(temp_db)
 
     # Verify database file exists
     assert temp_db.exists()

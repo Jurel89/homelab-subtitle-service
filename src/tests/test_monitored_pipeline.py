@@ -2,6 +2,12 @@
 Legacy test module retained for reference only.
 """
 
+import tempfile
+import time
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 pytest.skip(
@@ -9,12 +15,6 @@ pytest.skip(
     "See test_pipeline_runner.py for current coverage.",
     allow_module_level=True,
 )
-
-import tempfile
-import time
-from datetime import datetime
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 
 @pytest.fixture
@@ -183,7 +183,7 @@ def test_monitored_pipeline_with_progress_callback(temp_db, temp_video):
             db_path=temp_db,
         )
 
-        output = pipeline.generate_subtitles(
+        pipeline.generate_subtitles(
             video_path=temp_video,
             lang="en",
             task="transcribe",
@@ -306,7 +306,7 @@ def test_monitored_pipeline_metrics_collection(temp_db, temp_video):
             db_path=temp_db,
         )
 
-        output = pipeline.generate_subtitles(
+        pipeline.generate_subtitles(
             video_path=temp_video,
             lang="en",
             task="transcribe",

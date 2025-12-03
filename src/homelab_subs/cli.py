@@ -433,18 +433,18 @@ def _run_history(
             print("Overall Statistics")
             print(f"{'='*80}")
             print(f"Total Jobs: {stats['total_jobs']}")
-            print(f"\nStatus Breakdown:")
+            print("\nStatus Breakdown:")
             for status_name, count in stats["status_counts"].items():
                 print(f"  {status_name:12} : {count:>5}")
 
             if stats["avg_duration_seconds"]:
-                print(f"\nDuration:")
+                print("\nDuration:")
                 print(f"  Average: {stats['avg_duration_seconds']:.2f}s")
                 print(f"  Min:     {stats['min_duration_seconds']:.2f}s")
                 print(f"  Max:     {stats['max_duration_seconds']:.2f}s")
 
             if stats["avg_cpu_percent"]:
-                print(f"\nPerformance Averages:")
+                print("\nPerformance Averages:")
                 print(f"  CPU:    {stats['avg_cpu_percent']:.1f}%")
                 print(f"  Memory: {stats['avg_memory_mb']:.1f} MB")
                 if stats["avg_gpu_percent"]:
@@ -478,7 +478,7 @@ def _run_history(
                 f"{job.job_id:>10} | {job.status:>10} | {video_name:45} | {duration_str:>10} | {cpu_str:>8} | {mem_str:>9}"
             )
 
-        print(f"\nUse 'subsvc history --job-id <id>' to see detailed metrics for a specific job.")
+        print("\nUse 'subsvc history --job-id <id>' to see detailed metrics for a specific job.")
         print()
 
     except RuntimeError as exc:
