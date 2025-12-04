@@ -274,6 +274,76 @@ def _build_parser() -> argparse.ArgumentParser:
         help='Translation backend to query: "helsinki" or "nllb". Default: nllb',
     )
 
+    # ---- sync ----
+    sync = subparsers.add_parser(
+        "sync",
+        help="Synchronize existing subtitle timing with video audio.",
+    )
+    sync.add_argument(
+        "video",
+        type=Path,
+        help="Path to the video file.",
+    )
+    sync.add_argument(
+        "srt",
+        type=Path,
+        help="Path to the existing SRT subtitle file to synchronize.",
+    )
+    sync.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Optional output SRT path. Defaults to <input>.synced.srt",
+    )
+    sync.add_argument(
+        "--lang",
+        default=None,
+        help="Language code for transcription (default: auto-detect).",
+    )
+    sync.add_argument(
+        "--model",
+        default="small",
+        help='Whisper model name for timing reference (default: small). '
+        'Use "tiny" for speed or "medium"/"large-v2" for accuracy.',
+    )
+    sync.add_argument(
+        "--device",
+        default="cpu",
+        help='Device to use (e.g. "cpu" or "cuda"). Default: cpu',
+    )
+    sync.add_argument(
+        "--compute-type",
+        dest="compute_type",
+        default="int8",
+        help='Compute type for faster-whisper. Default: int8',
+    )
+    sync.add_argument(
+        "--min-similarity",
+        dest="min_similarity",
+        type=float,
+        default=0.6,
+        help="Minimum text similarity (0-1) to match subtitles. Default: 0.6",
+    )
+    sync.add_argument(
+        "--no-interpolate",
+        dest="interpolate",
+        action="store_false",
+        help="Don't interpolate timing for unmatched subtitles. Keep original timing instead.",
+    )
+    sync.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    sync.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
     return parser
 
 
@@ -712,6 +782,85 @@ def _run_list_languages(backend: str) -> None:
     print()
 
 
+def _run_sync(
+    video_path: Path,
+    srt_path: Path,
+    output_path: Optional[Path],
+    lang: Optional[str],
+    model_name: str,
+    device: str,
+    compute_type: str,
+    min_similarity: float,
+    interpolate: bool,
+) -> Path:
+    """
+    Synchronize subtitle timing with video audio.
+    """
+    from .core.sync import SubtitleSyncer, SyncConfig, SyncResult
+
+    context = {
+        "video_file": str(video_path.name),
+        "srt_file": str(srt_path.name),
+    }
+
+    logger.info(
+        f"Starting subtitle sync: {srt_path.name} -> {video_path.name}",
+        extra=context,
+    )
+
+    config = SyncConfig(
+        model_name=model_name,
+        device=device,
+        compute_type=compute_type,
+        language=lang,
+        min_similarity=min_similarity,
+        interpolate_unmatched=interpolate,
+    )
+
+    syncer = SubtitleSyncer(config)
+
+    pbar = tqdm(total=100, unit="%", desc="Transcribing for sync", leave=True)
+
+    def progress_cb(pct: float, count: int) -> None:
+        pbar.n = int(pct)
+        pbar.refresh()
+
+    try:
+        result: SyncResult = syncer.sync_subtitles(
+            video_path=video_path,
+            srt_path=srt_path,
+            output_path=output_path,
+            progress_callback=progress_cb,
+        )
+        pbar.n = 100
+        pbar.refresh()
+    finally:
+        pbar.close()
+
+    # Print summary
+    print(f"\n{'='*60}")
+    print("Synchronization Summary")
+    print(f"{'='*60}")
+    print(f"Total subtitles:     {len(result.synced_cues)}")
+    print(f"Matched:             {result.matched_count}")
+    print(f"Interpolated:        {result.interpolated_count}")
+    print(f"Unchanged:           {result.unchanged_count}")
+    print(f"Average offset:      {result.avg_offset_seconds:.2f}s")
+    print(f"Maximum offset:      {result.max_offset_seconds:.2f}s")
+    print()
+
+    # Determine output path
+    if output_path is None:
+        output_path = srt_path.with_suffix(".synced.srt")
+
+    logger.info(
+        f"Successfully synchronized subtitles: {output_path.name}",
+        extra={**context, "output_file": str(output_path)},
+    )
+
+    return output_path
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -773,6 +922,21 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         if args.command == "languages":
             _run_list_languages(backend=args.backend)
+            return 0
+
+        if args.command == "sync":
+            srt_path = _run_sync(
+                video_path=args.video,
+                srt_path=args.srt,
+                output_path=args.output,
+                lang=args.lang,
+                model_name=args.model,
+                device=args.device,
+                compute_type=args.compute_type,
+                min_similarity=args.min_similarity,
+                interpolate=args.interpolate,
+            )
+            logger.info(f"✓ Synchronized subtitles written to: {srt_path}")
             return 0
 
         parser.error(f"Unknown command: {args.command}")

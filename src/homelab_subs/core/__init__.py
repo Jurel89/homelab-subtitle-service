@@ -1,12 +1,22 @@
 # src/homelab_subs/core/__init__.py
 
 """
-Core functionality for subtitle generation and translation.
+Core functionality for subtitle generation, translation, and synchronization.
 """
 
 from .audio import FFmpeg, FFmpegError
 from .srt import segments_to_srt, write_srt_file
 from .transcription import Segment, Transcriber, TranscriberConfig
+from .sync import (
+    SubtitleCue,
+    SubtitleSyncer,
+    SyncConfig,
+    SyncResult,
+    parse_srt_file,
+    parse_srt_content,
+    write_srt_from_cues,
+    sync_subtitle_file,
+)
 
 # Translation is optional (requires extra dependencies)
 try:
@@ -44,6 +54,15 @@ __all__ = [
     "Segment",
     "Transcriber",
     "TranscriberConfig",
+    # Sync
+    "SubtitleCue",
+    "SubtitleSyncer",
+    "SyncConfig",
+    "SyncResult",
+    "parse_srt_file",
+    "parse_srt_content",
+    "write_srt_from_cues",
+    "sync_subtitle_file",
     # Translation (optional)
     "TRANSLATION_AVAILABLE",
     "Translator",
@@ -55,16 +74,3 @@ __all__ = [
     "NLLB_LANGUAGE_CODES",
     "HELSINKI_LANGUAGE_PAIRS",
 ]
-
-# Add translation exports if available
-if TRANSLATION_AVAILABLE:
-    __all__.extend([
-        "Translator",
-        "TranslatorConfig",
-        "SubtitleEntry",
-        "list_supported_languages",
-        "get_available_backends",
-        "TranslationBackend",
-        "NLLB_LANGUAGE_CODES",
-        "HELSINKI_LANGUAGE_PAIRS",
-    ])
