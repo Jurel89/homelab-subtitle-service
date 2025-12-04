@@ -12,6 +12,7 @@ from typing import Callable, Optional, TYPE_CHECKING
 from .audio import FFmpeg
 from .srt import write_srt_file
 from .transcription import Transcriber, TranscriberConfig
+from .translation import Translator, TranslatorConfig, TranslationBackend
 from ..logging_config import get_logger, log_stage
 
 logger = get_logger(__name__)
@@ -69,8 +70,15 @@ def _execute_pipeline(
     beam_size: int = 5,
     vad_filter: bool = True,
     progress_callback: ProgressCallback = None,
+    target_lang: Optional[str] = None,
+    translation_backend: TranslationBackend = "nllb",
+    translation_model: Optional[str] = None,
 ) -> Path:
-    """Core subtitle generation steps shared by all runners."""
+    """Core subtitle generation steps shared by all runners.
+    
+    If target_lang is provided and differs from the source language (lang),
+    automatic translation will be performed after transcription.
+    """
     context = {"video_file": str(video_path.name)}
     logger.info("Starting pipeline for %s", video_path.name, extra=context)
 
@@ -101,6 +109,37 @@ def _execute_pipeline(
     with log_stage(logger, "srt_generation", **context):
         result = write_srt_file(segments, output_path)
 
+    # Automatic translation if target language differs from source
+    source_lang = language_param or "en"  # Default to English if auto-detected
+    if target_lang and target_lang != source_lang:
+        logger.info(
+            "Translating subtitles from '%s' to '%s'",
+            source_lang,
+            target_lang,
+            extra=context,
+        )
+        
+        # Generate translated output path (e.g., video.en.srt -> video.es.srt)
+        translated_output = output_path.with_suffix(f".{target_lang}.srt")
+        
+        translator_config = TranslatorConfig(
+            backend=translation_backend,
+            model_name=translation_model,
+            device=device,
+        )
+        translator = Translator(config=translator_config)
+        
+        with log_stage(logger, "translation", **context):
+            translator.translate_srt_file(
+                input_path=result,
+                output_path=translated_output,
+                source_lang=source_lang,
+                target_lang=target_lang,
+            )
+        
+        logger.info("Translation complete: %s", translated_output, extra=context)
+        result = translated_output
+
     logger.info("Pipeline complete: %s", result, extra=context)
     return result
 
@@ -116,8 +155,22 @@ def generate_subtitles_for_video(
     beam_size: int = 5,
     vad_filter: bool = True,
     progress_callback: ProgressCallback = None,
+    target_lang: Optional[str] = None,
+    translation_backend: TranslationBackend = "nllb",
+    translation_model: Optional[str] = None,
 ) -> Path:
-    """Public API for the minimal pipeline (no monitoring)."""
+    """Public API for the minimal pipeline (no monitoring).
+    
+    Parameters
+    ----------
+    target_lang : Optional[str]
+        If provided and different from lang, subtitles will be automatically
+        translated to this language after transcription.
+    translation_backend : TranslationBackend
+        Translation backend to use: "helsinki" or "nllb". Default: "nllb".
+    translation_model : Optional[str]
+        Specific translation model name. If None, uses default for backend.
+    """
     return _execute_pipeline(
         video_path=video_path,
         output_path=output_path,
@@ -129,6 +182,9 @@ def generate_subtitles_for_video(
         beam_size=beam_size,
         vad_filter=vad_filter,
         progress_callback=progress_callback,
+        target_lang=target_lang,
+        translation_backend=translation_backend,
+        translation_model=translation_model,
     )
 
 
@@ -186,6 +242,9 @@ class PipelineRunner:
         beam_size: int = 5,
         vad_filter: bool = True,
         progress_callback: ProgressCallback = None,
+        target_lang: Optional[str] = None,
+        translation_backend: TranslationBackend = "nllb",
+        translation_model: Optional[str] = None,
     ) -> Path:
         job_id = job_id or uuid.uuid4().hex[:8]
         start_time = time.time()
@@ -227,6 +286,9 @@ class PipelineRunner:
                 beam_size=beam_size,
                 vad_filter=vad_filter,
                 progress_callback=progress_callback,
+                target_lang=target_lang,
+                translation_backend=translation_backend,
+                translation_model=translation_model,
             )
 
             duration = time.time() - start_time

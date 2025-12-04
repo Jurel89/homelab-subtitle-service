@@ -114,6 +114,29 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Custom database path (default: ~/.homelab-subs/logs.db)",
     )
+    gen.add_argument(
+        "--target-lang",
+        dest="target_lang",
+        default=None,
+        help="Target language for automatic translation after transcription. "
+        "If set and different from --lang, subtitles will be translated. "
+        "(e.g., 'es', 'fr', 'de')",
+    )
+    gen.add_argument(
+        "--translation-backend",
+        dest="translation_backend",
+        choices=["helsinki", "nllb"],
+        default="nllb",
+        help='Translation backend: "helsinki" (MarianMT, fast) or "nllb" (NLLB-200, more languages). '
+        "Default: nllb",
+    )
+    gen.add_argument(
+        "--translation-model",
+        dest="translation_model",
+        default=None,
+        help="Specific translation model name (optional). For NLLB: "
+        "'facebook/nllb-200-distilled-600M' (default) or 'facebook/nllb-200-3.3B' (best quality).",
+    )
 
     # ---- batch ----
     batch = subparsers.add_parser(
@@ -278,9 +301,15 @@ def _run_generate(
     enable_monitoring: bool = True,
     enable_db_logging: bool = True,
     db_path: Optional[Path] = None,
+    target_lang: Optional[str] = None,
+    translation_backend: str = "nllb",
+    translation_model: Optional[str] = None,
 ) -> Path:
     """
     End-to-end generation driven by the JobService orchestrator.
+    
+    If target_lang is provided and differs from lang, automatic translation
+    will be performed after transcription.
     """
     if job_id is None:
         job_id = str(uuid.uuid4())[:8]
@@ -315,7 +344,11 @@ def _run_generate(
 
     language_param: Optional[str] = lang if lang else None
 
-    pbar = tqdm(total=100, unit="%", desc="Transcribing", leave=True)
+    # Determine progress bar description based on whether translation will occur
+    will_translate = target_lang and target_lang != (lang or "en")
+    progress_desc = "Transcribing" if not will_translate else "Transcribing + Translating"
+    
+    pbar = tqdm(total=100, unit="%", desc=progress_desc, leave=True)
 
     def progress_cb(pct: float, count: int) -> None:
         pbar.n = int(pct)
@@ -338,13 +371,23 @@ def _run_generate(
             vad_filter=vad_filter,
             job_id=job_id,
             progress_callback=progress_cb,
+            target_lang=target_lang,
+            translation_backend=translation_backend,
+            translation_model=translation_model,
         )
         pbar.n = 100
         pbar.refresh()
-        logger.info(
-            f"Successfully generated subtitles: {result_path.name}",
-            extra={**context, "output_file": str(result_path)},
-        )
+        
+        if will_translate:
+            logger.info(
+                f"Successfully generated and translated subtitles: {result_path.name}",
+                extra={**context, "output_file": str(result_path)},
+            )
+        else:
+            logger.info(
+                f"Successfully generated subtitles: {result_path.name}",
+                extra={**context, "output_file": str(result_path)},
+            )
         return result_path
     finally:
         pbar.close()
@@ -578,7 +621,7 @@ def _run_translate(
     Translate an SRT subtitle file to another language.
     """
     try:
-        from .core.translation import Translator, TranslatorConfig, TranslationBackend
+        from .core.translation import Translator, TranslatorConfig
     except ImportError as e:
         raise ImportError(
             "Translation requires additional dependencies. "
@@ -648,7 +691,7 @@ def _run_list_languages(backend: str) -> None:
     List supported languages for a translation backend.
     """
     try:
-        from .core.translation import list_supported_languages, TranslationBackend
+        from .core.translation import list_supported_languages
     except ImportError as e:
         raise ImportError(
             "Translation requires additional dependencies. "
@@ -693,6 +736,9 @@ def main(argv: Optional[list[str]] = None) -> int:
                 enable_monitoring=args.enable_monitoring,
                 enable_db_logging=args.enable_db_logging,
                 db_path=args.db_path,
+                target_lang=args.target_lang,
+                translation_backend=args.translation_backend,
+                translation_model=args.translation_model,
             )
             logger.info(f"✓ Subtitles written to: {srt_path}")
             return 0

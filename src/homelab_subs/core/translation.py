@@ -14,9 +14,9 @@ preserving timing information and subtitle structure.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, Literal, Optional
+from typing import Callable, Literal, Optional
 
 from ..logging_config import get_logger
 
@@ -568,7 +568,7 @@ def get_available_backends() -> list[TranslationBackend]:
     backends: list[TranslationBackend] = []
 
     try:
-        import transformers
+        import transformers  # noqa: F401
         # Both backends use transformers
         backends.extend(["helsinki", "nllb"])
     except ImportError:

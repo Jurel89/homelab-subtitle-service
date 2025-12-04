@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Optional, Callable, TYPE_CHECKING
+from typing import Literal, Optional, Callable, TYPE_CHECKING
 
 from ..logging_config import get_logger
 from ..core.pipeline import PipelineRunner, MONITORING_AVAILABLE, DB_LOGGING_AVAILABLE
@@ -10,6 +10,7 @@ from ..core.pipeline import PipelineRunner, MONITORING_AVAILABLE, DB_LOGGING_AVA
 logger = get_logger(__name__)
 
 ProgressCallback = Optional[Callable[[float, int], None]]
+TranslationBackend = Literal["helsinki", "nllb"]
 
 try:  # pragma: no cover - optional dependency
     from ..core.db_logger import DatabaseLogger as _DatabaseLogger
@@ -64,7 +65,22 @@ class JobService:
         vad_filter: bool = True,
         job_id: Optional[str] = None,
         progress_callback: ProgressCallback = None,
+        target_lang: Optional[str] = None,
+        translation_backend: TranslationBackend = "nllb",
+        translation_model: Optional[str] = None,
     ) -> Path:
+        """Generate subtitles for a video file.
+        
+        Parameters
+        ----------
+        target_lang : Optional[str]
+            If provided and different from lang, subtitles will be automatically
+            translated to this language after transcription.
+        translation_backend : TranslationBackend
+            Translation backend to use: "helsinki" or "nllb". Default: "nllb".
+        translation_model : Optional[str]
+            Specific translation model name. If None, uses default for backend.
+        """
         job_id = job_id or uuid.uuid4().hex[:8]
         runner = PipelineRunner(
             enable_monitoring=self.enable_monitoring,
@@ -85,6 +101,9 @@ class JobService:
             beam_size=beam_size,
             vad_filter=vad_filter,
             progress_callback=progress_callback,
+            target_lang=target_lang,
+            translation_backend=translation_backend,
+            translation_model=translation_model,
         )
 
     # Database convenience helpers -------------------------------------------------
