@@ -173,6 +173,60 @@ python examples/log_viewer.py --log-file /var/log/subsvc/job.log
 
 For detailed logging documentation, see [docs/LOGGING.md](docs/LOGGING.md).
 
+## 📈 Performance Monitoring & History
+
+Track CPU, memory, and GPU usage during subtitle generation. Monitoring is **enabled by default** and stores job history in a local SQLite database.
+
+### View Job History
+
+```bash
+# Show recent jobs
+subsvc history
+
+# Show overall statistics
+subsvc history --stats
+
+# Show detailed job info with metrics
+subsvc history --job-id <job-id>
+
+# Filter by status
+subsvc history --status completed
+```
+
+### Disable Monitoring
+
+```bash
+# Disable all monitoring
+subsvc generate video.mp4 --no-monitoring
+
+# Keep monitoring but don't save to database
+subsvc generate video.mp4 --no-db-logging
+```
+
+### Install Monitoring Dependencies
+
+Monitoring requires additional packages:
+
+```bash
+# System monitoring (CPU, memory)
+pip install psutil
+
+# GPU monitoring (NVIDIA, Linux only)
+pip install nvidia-ml-py
+
+# Or install all dev dependencies
+pip install -e ".[dev]"
+```
+
+### Features
+- 📊 Real-time performance tracking (CPU, memory, disk I/O, GPU)
+- 💾 Persistent SQLite database (`~/.homelab-subs/logs.db`)
+- 📈 Time-series metrics for visualization
+- 🔍 Query API for Web UI integration
+- 🚀 Ready for dashboard integration
+
+For complete monitoring documentation, see [docs/MONITORING.md](docs/MONITORING.md).
+
 ## 🏗️ Project Structure
 
 ```
