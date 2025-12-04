@@ -36,6 +36,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+translation = [
+  # For subtitle translation (Helsinki-NLP MarianMT and NLLB-200)
+  "transformers>=4.35.0",
+  "sentencepiece>=0.1.99",
+  "torch>=2.0.0",
+  "sacremoses>=0.1.0",
+]
 dev = [
   "pytest>=7.0.0",
   "pytest-cov>=4.0.0",

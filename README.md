@@ -98,6 +98,47 @@ subsvc generate video.mp4 --task translate
 subsvc generate video.mp4 --device cuda --compute-type float16
 ```
 
+### Subtitle Translation
+
+Translate existing SRT files to other languages using Helsinki-NLP MarianMT or NLLB-200 models:
+
+```bash
+# Install translation dependencies
+pip install homelab-subtitle-service[translation]
+
+# Translate from English to Spanish using NLLB (recommended)
+subsvc translate video.en.srt --target-lang es
+
+# Translate to French
+subsvc translate video.en.srt --target-lang fr --output video.fr.srt
+
+# Use Helsinki-NLP backend (faster, fewer languages)
+subsvc translate video.en.srt --target-lang de --backend helsinki
+
+# Use GPU for faster translation
+subsvc translate video.en.srt --target-lang es --device cuda
+
+# Specify source language (default: en)
+subsvc translate video.es.srt --source-lang es --target-lang en
+```
+
+#### Translation Backends
+
+| Backend | Languages | Quality | Speed |
+|---------|-----------|---------|-------|
+| NLLB-200 (default) | 200+ | Higher | Slower |
+| Helsinki-NLP | ~20 pairs | Good | Faster |
+
+#### List Supported Languages
+
+```bash
+# List all supported languages for NLLB
+subsvc languages
+
+# List Helsinki-NLP supported languages
+subsvc languages --backend helsinki
+```
+
 ### Batch Processing
 
 Create a YAML configuration file:

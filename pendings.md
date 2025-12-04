@@ -3,7 +3,7 @@
     - On merge to main, run tests again, software quality, security, build a docker image in CI, optionally deploy to a self-hosted runner
     - Only deploy to docker hub when a new git tag is created, so we leave docker hub clean with only the stable and relevant upgrades
 
-- Add a functionality so this tool supports the translation to another language other than english, which is not supported by fast-whisper
+- Add a functionality so this tool supports the translation to another language other than english, which is not supported by fast-whisper ✔ (implemented Helsinki-NLP & NLLB-200)
 
 - Add a functionality so, when you already have a human generated subtitle, you can trigger a syncronization, so that subtitled is modified to match exactly your video file
 
@@ -22,7 +22,7 @@
 🧭 Recommended Execution Order (for maximum momentum)
 ✔ CI for PR → main → tag-based release
 ✔ Logging & performance metrics
-Add translation
+✔ Add translation (Helsinki-NLP & NLLB-200)
 Add subtitle syncing
 Add accuracy comparison
 Add job queue & structured logs

@@ -172,6 +172,85 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show detailed metrics for a specific job ID",
     )
 
+    # ---- translate ----
+    translate = subparsers.add_parser(
+        "translate",
+        help="Translate an existing SRT subtitle file to another language.",
+    )
+    translate.add_argument(
+        "input",
+        type=Path,
+        help="Path to the input SRT file to translate.",
+    )
+    translate.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Optional output SRT path. "
+        "Defaults to <input_dir>/<input_name>.<target_lang>.srt",
+    )
+    translate.add_argument(
+        "--source-lang",
+        dest="source_lang",
+        default="en",
+        help="Source language code (ISO 639-1, e.g., 'en'). Default: en",
+    )
+    translate.add_argument(
+        "--target-lang",
+        dest="target_lang",
+        required=True,
+        help="Target language code (ISO 639-1, e.g., 'es', 'fr', 'de').",
+    )
+    translate.add_argument(
+        "--backend",
+        choices=["helsinki", "nllb"],
+        default="nllb",
+        help='Translation backend: "helsinki" (MarianMT) or "nllb" (NLLB-200). Default: nllb',
+    )
+    translate.add_argument(
+        "--model",
+        default=None,
+        help="Specific model name (optional). For NLLB: 'facebook/nllb-200-distilled-600M' "
+        "(default) or 'facebook/nllb-200-3.3B' (best quality).",
+    )
+    translate.add_argument(
+        "--device",
+        default="cpu",
+        help='Device to use (e.g. "cpu" or "cuda"). Default: cpu',
+    )
+    translate.add_argument(
+        "--batch-size",
+        dest="batch_size",
+        type=int,
+        default=8,
+        help="Batch size for translation (default: 8).",
+    )
+    translate.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    translate.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
+    # ---- languages ----
+    languages = subparsers.add_parser(
+        "languages",
+        help="List supported languages for translation.",
+    )
+    languages.add_argument(
+        "--backend",
+        choices=["helsinki", "nllb"],
+        default="nllb",
+        help='Translation backend to query: "helsinki" or "nllb". Default: nllb',
+    )
+
     return parser
 
 
@@ -485,6 +564,111 @@ def _run_history(
         logger.error(str(exc))
 
 
+def _run_translate(
+    input_path: Path,
+    output_path: Optional[Path],
+    source_lang: str,
+    target_lang: str,
+    backend: str,
+    model_name: Optional[str],
+    device: str,
+    batch_size: int,
+) -> Path:
+    """
+    Translate an SRT subtitle file to another language.
+    """
+    try:
+        from .core.translation import Translator, TranslatorConfig, TranslationBackend
+    except ImportError as e:
+        raise ImportError(
+            "Translation requires additional dependencies. "
+            "Install with: pip install homelab-subtitle-service[translation]"
+        ) from e
+
+    context = {
+        "input_file": str(input_path.name),
+        "source_lang": source_lang,
+        "target_lang": target_lang,
+        "backend": backend,
+    }
+
+    logger.info(
+        f"Starting translation: {input_path.name} ({source_lang} -> {target_lang})",
+        extra=context,
+    )
+
+    if output_path is None:
+        # Default output: <input_dir>/<input_name>.<target_lang>.srt
+        output_path = input_path.with_suffix(f".{target_lang}.srt")
+
+    config = TranslatorConfig(
+        backend=backend,  # type: ignore[arg-type]
+        model_name=model_name,
+        device=device,
+        batch_size=batch_size,
+    )
+
+    translator = Translator(config=config)
+
+    # Check if language pair is supported
+    if not translator.is_language_pair_supported(source_lang, target_lang):
+        raise ValueError(
+            f"Language pair '{source_lang}' -> '{target_lang}' not supported "
+            f"with backend '{backend}'. Use 'subsvc languages --backend {backend}' "
+            "to see supported languages."
+        )
+
+    pbar = tqdm(total=100, unit="%", desc="Translating", leave=True)
+
+    def progress_cb(pct: float, count: int) -> None:
+        pbar.n = int(pct)
+        pbar.refresh()
+
+    try:
+        result_path = translator.translate_srt_file(
+            input_path=input_path,
+            output_path=output_path,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            progress_callback=progress_cb,
+        )
+        pbar.n = 100
+        pbar.refresh()
+        logger.info(
+            f"Successfully translated subtitles: {result_path.name}",
+            extra={**context, "output_file": str(result_path)},
+        )
+        return result_path
+    finally:
+        pbar.close()
+
+
+def _run_list_languages(backend: str) -> None:
+    """
+    List supported languages for a translation backend.
+    """
+    try:
+        from .core.translation import list_supported_languages, TranslationBackend
+    except ImportError as e:
+        raise ImportError(
+            "Translation requires additional dependencies. "
+            "Install with: pip install homelab-subtitle-service[translation]"
+        ) from e
+
+    languages = list_supported_languages(backend)  # type: ignore[arg-type]
+
+    print(f"\nSupported languages for '{backend}' backend:")
+    print(f"{'='*50}")
+    print(f"{'Code':<8} | {'Language':<30}")
+    print(f"{'-'*8}-+-{'-'*30}")
+
+    for code, name in sorted(languages.items()):
+        print(f"{code:<8} | {name:<30}")
+
+    print(f"\nTotal: {len(languages)} languages")
+    print()
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -525,6 +709,24 @@ def main(argv: Optional[list[str]] = None) -> int:
                 show_stats=args.stats,
                 job_id=args.job_id,
             )
+            return 0
+
+        if args.command == "translate":
+            srt_path = _run_translate(
+                input_path=args.input,
+                output_path=args.output,
+                source_lang=args.source_lang,
+                target_lang=args.target_lang,
+                backend=args.backend,
+                model_name=args.model,
+                device=args.device,
+                batch_size=args.batch_size,
+            )
+            logger.info(f"✓ Translated subtitles written to: {srt_path}")
+            return 0
+
+        if args.command == "languages":
+            _run_list_languages(backend=args.backend)
             return 0
 
         parser.error(f"Unknown command: {args.command}")
