@@ -2,6 +2,7 @@
 
 Main repository for automatic subtitle generation - a homelab-focused tool for generating high-quality subtitles from video files using FFmpeg and Whisper.
 
+
 ## 🎯 Features
 
 - **CLI Tool**: Simple command-line interface for subtitle generation
