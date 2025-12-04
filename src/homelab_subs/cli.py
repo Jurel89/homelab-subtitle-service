@@ -344,6 +344,136 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional log file path for JSON-formatted logs",
     )
 
+    # ---- compare ----
+    compare = subparsers.add_parser(
+        "compare",
+        help="Compare reference (human) subtitles with hypothesis (machine) subtitles.",
+    )
+    compare.add_argument(
+        "reference",
+        type=Path,
+        help="Path to reference SRT file (ground truth / human-generated).",
+    )
+    compare.add_argument(
+        "hypothesis",
+        type=Path,
+        help="Path to hypothesis SRT file (machine-generated to evaluate).",
+    )
+    compare.add_argument(
+        "--timing-threshold",
+        dest="timing_threshold",
+        type=float,
+        default=500.0,
+        help="Timing threshold in ms for accuracy measurement (default: 500).",
+    )
+    compare.add_argument(
+        "--detailed",
+        action="store_true",
+        help="Show detailed per-segment comparison.",
+    )
+    compare.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Output results in JSON format.",
+    )
+    compare.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Save report to file instead of printing to console.",
+    )
+    compare.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    compare.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
+    # ---- benchmark ----
+    benchmark = subparsers.add_parser(
+        "benchmark",
+        help="Generate subtitles and compare with reference to benchmark model/settings.",
+    )
+    benchmark.add_argument(
+        "video",
+        type=Path,
+        help="Path to the video file.",
+    )
+    benchmark.add_argument(
+        "reference",
+        type=Path,
+        help="Path to reference SRT file (ground truth / human-generated).",
+    )
+    benchmark.add_argument(
+        "--lang",
+        default="en",
+        help="Language code for transcription (default: en).",
+    )
+    benchmark.add_argument(
+        "--models",
+        nargs="+",
+        default=["small"],
+        help='Whisper model(s) to benchmark (e.g., "tiny small medium"). Default: small',
+    )
+    benchmark.add_argument(
+        "--compute-types",
+        dest="compute_types",
+        nargs="+",
+        default=["int8"],
+        help='Compute type(s) to benchmark (e.g., "int8 float16"). Default: int8',
+    )
+    benchmark.add_argument(
+        "--device",
+        default="cpu",
+        help='Device to use (e.g. "cpu" or "cuda"). Default: cpu',
+    )
+    benchmark.add_argument(
+        "--task",
+        choices=["transcribe", "translate"],
+        default="transcribe",
+        help='Task: "transcribe" or "translate". Default: transcribe',
+    )
+    benchmark.add_argument(
+        "--timing-threshold",
+        dest="timing_threshold",
+        type=float,
+        default=500.0,
+        help="Timing threshold in ms for accuracy measurement (default: 500).",
+    )
+    benchmark.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        type=Path,
+        help="Directory to save generated subtitles and reports. Default: current directory.",
+    )
+    benchmark.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Output benchmark summary in JSON format.",
+    )
+    benchmark.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    benchmark.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
     return parser
 
 
@@ -861,6 +991,263 @@ def _run_sync(
     return output_path
 
 
+def _run_compare(
+    reference_path: Path,
+    hypothesis_path: Path,
+    timing_threshold: float,
+    detailed: bool,
+    output_json: bool,
+    output_path: Optional[Path],
+) -> None:
+    """
+    Compare reference (human) subtitles with hypothesis (machine) subtitles.
+    """
+    from .core.comparison import (
+        SubtitleComparator,
+        format_comparison_report,
+    )
+    import json
+
+    context = {
+        "reference_file": str(reference_path.name),
+        "hypothesis_file": str(hypothesis_path.name),
+    }
+
+    logger.info(
+        f"Comparing subtitles: {reference_path.name} vs {hypothesis_path.name}",
+        extra=context,
+    )
+
+    comparator = SubtitleComparator(timing_threshold_ms=timing_threshold)
+    result = comparator.compare_files(reference_path, hypothesis_path)
+
+    if output_json:
+        # JSON output
+        output_data = {
+            "reference": str(result.reference_path) if result.reference_path else None,
+            "hypothesis": str(result.hypothesis_path) if result.hypothesis_path else None,
+            "overall_score": result.overall_score,
+            "text_metrics": {
+                "word_error_rate": result.text_metrics.word_error_rate,
+                "character_error_rate": result.text_metrics.character_error_rate,
+                "avg_similarity": result.text_metrics.avg_similarity,
+                "exact_match_count": result.text_metrics.exact_match_count,
+                "total_words_reference": result.text_metrics.total_words_reference,
+                "total_words_hypothesis": result.text_metrics.total_words_hypothesis,
+                "insertions": result.text_metrics.insertions,
+                "deletions": result.text_metrics.deletions,
+                "substitutions": result.text_metrics.substitutions,
+            },
+            "timing_metrics": {
+                "avg_start_offset_ms": result.timing_metrics.avg_start_offset_ms,
+                "avg_end_offset_ms": result.timing_metrics.avg_end_offset_ms,
+                "max_start_offset_ms": result.timing_metrics.max_start_offset_ms,
+                "max_end_offset_ms": result.timing_metrics.max_end_offset_ms,
+                "timing_accuracy_pct": result.timing_metrics.timing_accuracy_pct,
+                "overlap_ratio": result.timing_metrics.overlap_ratio,
+            },
+            "segment_metrics": {
+                "reference_count": result.segment_metrics.reference_count,
+                "hypothesis_count": result.segment_metrics.hypothesis_count,
+                "matched_count": result.segment_metrics.matched_count,
+                "unmatched_reference": result.segment_metrics.unmatched_reference,
+                "unmatched_hypothesis": result.segment_metrics.unmatched_hypothesis,
+                "segmentation_similarity": result.segment_metrics.segmentation_similarity,
+            },
+        }
+        report = json.dumps(output_data, indent=2)
+    else:
+        report = format_comparison_report(result, detailed=detailed)
+
+    if output_path:
+        output_path.write_text(report)
+        logger.info(f"Report saved to: {output_path}", extra=context)
+    else:
+        print(report)
+
+    logger.info(
+        f"Comparison complete. Overall score: {result.overall_score:.1f}/100",
+        extra={**context, "overall_score": result.overall_score},
+    )
+
+
+def _run_benchmark(
+    video_path: Path,
+    reference_path: Path,
+    lang: str,
+    models: list[str],
+    compute_types: list[str],
+    device: str,
+    task: TranscriptionTask,
+    timing_threshold: float,
+    output_dir: Optional[Path],
+    output_json: bool,
+) -> None:
+    """
+    Benchmark different models/settings against a reference.
+    """
+    from .core.comparison import SubtitleComparator
+    import json
+    import time
+
+    if output_dir is None:
+        output_dir = Path.cwd()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    context = {
+        "video_file": str(video_path.name),
+        "reference_file": str(reference_path.name),
+    }
+
+    logger.info(
+        f"Starting benchmark for {video_path.name} with {len(models) * len(compute_types)} configurations",
+        extra=context,
+    )
+
+    comparator = SubtitleComparator(timing_threshold_ms=timing_threshold)
+    results: list[dict[str, Any]] = []
+
+    service = JobService(
+        enable_monitoring=True,
+        enable_db_logging=False,
+    )
+
+    total_configs = len(models) * len(compute_types)
+    config_num = 0
+
+    for model_name in models:
+        for compute_type in compute_types:
+            config_num += 1
+            config_id = f"{model_name}_{compute_type}"
+
+            print(f"\n[{config_num}/{total_configs}] Benchmarking: {config_id}")
+            logger.info(
+                f"Running configuration: model={model_name}, compute_type={compute_type}",
+                extra={**context, "model": model_name, "compute_type": compute_type},
+            )
+
+            # Generate output path for this configuration
+            srt_output = output_dir / f"{video_path.stem}.{config_id}.srt"
+
+            # Measure generation time
+            start_time = time.time()
+
+            pbar = tqdm(total=100, unit="%", desc=f"Transcribing ({config_id})", leave=False)
+
+            def progress_cb(pct: float, count: int) -> None:
+                pbar.n = int(pct)
+                pbar.refresh()
+
+            try:
+                result_path = service.generate_subtitles(
+                    video_path=video_path,
+                    output_path=srt_output,
+                    lang=lang,
+                    model_name=model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    task=task,
+                    beam_size=5,
+                    vad_filter=True,
+                    job_id=f"bench_{config_id}",
+                    progress_callback=progress_cb,
+                )
+                pbar.close()
+            except Exception as exc:
+                pbar.close()
+                logger.error(f"Configuration {config_id} failed: {exc}", extra=context)
+                results.append({
+                    "model": model_name,
+                    "compute_type": compute_type,
+                    "status": "failed",
+                    "error": str(exc),
+                })
+                continue
+
+            generation_time = time.time() - start_time
+
+            # Compare with reference
+            comparison = comparator.compare_files(reference_path, result_path)
+
+            result_entry = {
+                "model": model_name,
+                "compute_type": compute_type,
+                "status": "success",
+                "output_path": str(result_path),
+                "generation_time_seconds": round(generation_time, 2),
+                "overall_score": round(comparison.overall_score, 2),
+                "word_error_rate": round(comparison.text_metrics.word_error_rate, 4),
+                "character_error_rate": round(comparison.text_metrics.character_error_rate, 4),
+                "avg_similarity": round(comparison.text_metrics.avg_similarity, 4),
+                "timing_accuracy_pct": round(comparison.timing_metrics.timing_accuracy_pct, 2),
+            }
+            results.append(result_entry)
+
+            logger.info(
+                f"Configuration {config_id} complete: "
+                f"score={comparison.overall_score:.1f}, "
+                f"WER={comparison.text_metrics.word_error_rate:.2%}, "
+                f"time={generation_time:.1f}s",
+                extra={**context, **result_entry},
+            )
+
+    # Print summary
+    print("\n" + "=" * 80)
+    print("BENCHMARK SUMMARY")
+    print("=" * 80)
+
+    if output_json:
+        summary = {
+            "video": str(video_path),
+            "reference": str(reference_path),
+            "device": device,
+            "results": results,
+        }
+        print(json.dumps(summary, indent=2))
+    else:
+        print(f"{'Model':<15} | {'Compute':<12} | {'Score':>8} | {'WER':>8} | {'Time (s)':>10} | {'Status':<10}")
+        print("-" * 15 + "-+-" + "-" * 12 + "-+-" + "-" * 8 + "-+-" + "-" * 8 + "-+-" + "-" * 10 + "-+-" + "-" * 10)
+
+        for r in results:
+            if r["status"] == "success":
+                print(
+                    f"{r['model']:<15} | {r['compute_type']:<12} | "
+                    f"{r['overall_score']:>8.1f} | {r['word_error_rate']:>7.2%} | "
+                    f"{r['generation_time_seconds']:>10.1f} | {r['status']:<10}"
+                )
+            else:
+                print(
+                    f"{r['model']:<15} | {r['compute_type']:<12} | "
+                    f"{'N/A':>8} | {'N/A':>8} | {'N/A':>10} | {r['status']:<10}"
+                )
+
+        # Find best configuration
+        successful = [r for r in results if r["status"] == "success"]
+        if successful:
+            best_score = max(successful, key=lambda x: x["overall_score"])
+            best_speed = min(successful, key=lambda x: x["generation_time_seconds"])
+
+            print("\n" + "-" * 80)
+            print(f"Best Quality:  {best_score['model']} / {best_score['compute_type']} "
+                  f"(score: {best_score['overall_score']:.1f}, WER: {best_score['word_error_rate']:.2%})")
+            print(f"Fastest:       {best_speed['model']} / {best_speed['compute_type']} "
+                  f"(time: {best_speed['generation_time_seconds']:.1f}s, score: {best_speed['overall_score']:.1f})")
+
+    print()
+
+    # Save detailed report
+    report_path = output_dir / f"benchmark_report_{video_path.stem}.json"
+    report_data = {
+        "video": str(video_path),
+        "reference": str(reference_path),
+        "device": device,
+        "language": lang,
+        "results": results,
+    }
+    report_path.write_text(json.dumps(report_data, indent=2))
+    logger.info(f"Benchmark report saved to: {report_path}", extra=context)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -937,6 +1324,32 @@ def main(argv: Optional[list[str]] = None) -> int:
                 interpolate=args.interpolate,
             )
             logger.info(f"✓ Synchronized subtitles written to: {srt_path}")
+            return 0
+
+        if args.command == "compare":
+            _run_compare(
+                reference_path=args.reference,
+                hypothesis_path=args.hypothesis,
+                timing_threshold=args.timing_threshold,
+                detailed=args.detailed,
+                output_json=args.output_json,
+                output_path=args.output,
+            )
+            return 0
+
+        if args.command == "benchmark":
+            _run_benchmark(
+                video_path=args.video,
+                reference_path=args.reference,
+                lang=args.lang,
+                models=args.models,
+                compute_types=args.compute_types,
+                device=args.device,
+                task=args.task,
+                timing_threshold=args.timing_threshold,
+                output_dir=args.output_dir,
+                output_json=args.output_json,
+            )
             return 0
 
         parser.error(f"Unknown command: {args.command}")

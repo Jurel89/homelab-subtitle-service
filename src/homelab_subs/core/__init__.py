@@ -1,7 +1,7 @@
 # src/homelab_subs/core/__init__.py
 
 """
-Core functionality for subtitle generation, translation, and synchronization.
+Core functionality for subtitle generation, translation, synchronization, and comparison.
 """
 
 from .audio import FFmpeg, FFmpegError
@@ -16,6 +16,16 @@ from .sync import (
     parse_srt_content,
     write_srt_from_cues,
     sync_subtitle_file,
+)
+from .comparison import (
+    SubtitleComparator,
+    ComparisonResult,
+    TextMetrics,
+    TimingMetrics,
+    SegmentMetrics,
+    SegmentComparison,
+    compare_subtitle_files,
+    format_comparison_report,
 )
 
 # Translation is optional (requires extra dependencies)
@@ -63,6 +73,15 @@ __all__ = [
     "parse_srt_content",
     "write_srt_from_cues",
     "sync_subtitle_file",
+    # Comparison
+    "SubtitleComparator",
+    "ComparisonResult",
+    "TextMetrics",
+    "TimingMetrics",
+    "SegmentMetrics",
+    "SegmentComparison",
+    "compare_subtitle_files",
+    "format_comparison_report",
     # Translation (optional)
     "TRANSLATION_AVAILABLE",
     "Translator",
