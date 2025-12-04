@@ -39,10 +39,10 @@ def test_monitored_pipeline_initialization(temp_db):
     """Test MonitoredPipeline initialization."""
     from homelab_subs.core.monitored_pipeline import MonitoredPipeline
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor"
-    ), patch("homelab_subs.core.monitored_pipeline.DatabaseLogger"), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline"
+    with (
+        patch("homelab_subs.core.monitored_pipeline.PerformanceMonitor"),
+        patch("homelab_subs.core.monitored_pipeline.DatabaseLogger"),
+        patch("homelab_subs.core.monitored_pipeline.SubtitlePipeline"),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -61,9 +61,10 @@ def test_monitored_pipeline_without_db_logging(temp_db):
     """Test MonitoredPipeline without database logging."""
     from homelab_subs.core.monitored_pipeline import MonitoredPipeline
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor"
-    ), patch("homelab_subs.core.monitored_pipeline.SubtitlePipeline"):
+    with (
+        patch("homelab_subs.core.monitored_pipeline.PerformanceMonitor"),
+        patch("homelab_subs.core.monitored_pipeline.SubtitlePipeline"),
+    ):
         pipeline = MonitoredPipeline(
             model_name="base",
             device="cpu",
@@ -105,15 +106,19 @@ def test_monitored_pipeline_generate_subtitles(temp_db, temp_video):
     mock_pipeline = MagicMock()
     mock_pipeline.generate_subtitles.return_value = Path("/tmp/output.srt")
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
-        return_value=mock_monitor,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
-        return_value=mock_pipeline,
+    with (
+        patch(
+            "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
+            return_value=mock_monitor,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
+            return_value=mock_pipeline,
+        ),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -165,15 +170,19 @@ def test_monitored_pipeline_with_progress_callback(temp_db, temp_video):
     def progress_callback(current, total):
         progress_calls.append((current, total))
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
-        return_value=mock_monitor,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
-        return_value=mock_pipeline,
+    with (
+        patch(
+            "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
+            return_value=mock_monitor,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
+            return_value=mock_pipeline,
+        ),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -217,15 +226,19 @@ def test_monitored_pipeline_handles_pipeline_error(temp_db, temp_video):
     mock_pipeline = MagicMock()
     mock_pipeline.generate_subtitles.side_effect = RuntimeError("Test error")
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
-        return_value=mock_monitor,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
-        return_value=mock_pipeline,
+    with (
+        patch(
+            "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
+            return_value=mock_monitor,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
+            return_value=mock_pipeline,
+        ),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -288,15 +301,19 @@ def test_monitored_pipeline_metrics_collection(temp_db, temp_video):
 
     mock_pipeline.generate_subtitles.side_effect = slow_generate
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
-        return_value=mock_monitor,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
-        return_value=mock_pipeline,
+    with (
+        patch(
+            "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
+            return_value=mock_monitor,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
+            return_value=mock_pipeline,
+        ),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -327,13 +344,13 @@ def test_monitored_pipeline_get_job_history(temp_db):
         MagicMock(job_id="job-2"),
     ]
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor"
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline"
+    with (
+        patch("homelab_subs.core.monitored_pipeline.PerformanceMonitor"),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch("homelab_subs.core.monitored_pipeline.SubtitlePipeline"),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -346,9 +363,7 @@ def test_monitored_pipeline_get_job_history(temp_db):
         history = pipeline.get_job_history(limit=10)
 
         assert len(history) == 2
-        mock_db_logger.get_recent_jobs.assert_called_once_with(
-            limit=10, status=None
-        )
+        mock_db_logger.get_recent_jobs.assert_called_once_with(limit=10, status=None)
 
 
 @patch("homelab_subs.core.monitored_pipeline.MONITORING_AVAILABLE", True)
@@ -363,13 +378,13 @@ def test_monitored_pipeline_get_job_details(temp_db):
     mock_db_logger.get_job.return_value = mock_job
     mock_db_logger.get_job_metrics.return_value = mock_metrics
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor"
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline"
+    with (
+        patch("homelab_subs.core.monitored_pipeline.PerformanceMonitor"),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch("homelab_subs.core.monitored_pipeline.SubtitlePipeline"),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -401,13 +416,13 @@ def test_monitored_pipeline_get_statistics(temp_db):
     mock_db_logger = MagicMock()
     mock_db_logger.get_statistics.return_value = mock_stats
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor"
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline"
+    with (
+        patch("homelab_subs.core.monitored_pipeline.PerformanceMonitor"),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch("homelab_subs.core.monitored_pipeline.SubtitlePipeline"),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -428,9 +443,10 @@ def test_monitored_pipeline_without_db_logging_no_history(temp_db):
     """Test that history methods return None when db_logging is disabled."""
     from homelab_subs.core.monitored_pipeline import MonitoredPipeline
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor"
-    ), patch("homelab_subs.core.monitored_pipeline.SubtitlePipeline"):
+    with (
+        patch("homelab_subs.core.monitored_pipeline.PerformanceMonitor"),
+        patch("homelab_subs.core.monitored_pipeline.SubtitlePipeline"),
+    ):
         pipeline = MonitoredPipeline(
             model_name="base",
             device="cpu",
@@ -489,15 +505,19 @@ def test_monitored_pipeline_cleanup_on_success(temp_db, temp_video):
     mock_pipeline = MagicMock()
     mock_pipeline.generate_subtitles.return_value = Path("/tmp/output.srt")
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
-        return_value=mock_monitor,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
-        return_value=mock_pipeline,
+    with (
+        patch(
+            "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
+            return_value=mock_monitor,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
+            return_value=mock_pipeline,
+        ),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",
@@ -545,15 +565,19 @@ def test_monitored_pipeline_custom_vad_and_beam_size(temp_db, temp_video):
     mock_pipeline = MagicMock()
     mock_pipeline.generate_subtitles.return_value = Path("/tmp/output.srt")
 
-    with patch(
-        "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
-        return_value=mock_monitor,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.DatabaseLogger",
-        return_value=mock_db_logger,
-    ), patch(
-        "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
-        return_value=mock_pipeline,
+    with (
+        patch(
+            "homelab_subs.core.monitored_pipeline.PerformanceMonitor",
+            return_value=mock_monitor,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.DatabaseLogger",
+            return_value=mock_db_logger,
+        ),
+        patch(
+            "homelab_subs.core.monitored_pipeline.SubtitlePipeline",
+            return_value=mock_pipeline,
+        ),
     ):
         pipeline = MonitoredPipeline(
             model_name="base",

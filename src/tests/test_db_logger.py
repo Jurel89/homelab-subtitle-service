@@ -35,9 +35,7 @@ def test_database_logger_initialization(temp_db):
     cursor = conn.cursor()
 
     # Check jobs table exists
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'"
-    )
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='jobs'")
     assert cursor.fetchone() is not None
 
     # Check metrics table exists

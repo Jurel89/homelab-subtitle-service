@@ -77,8 +77,14 @@ class TestTranslator:
 
     def test_get_helsinki_model_name(self):
         translator = Translator()
-        assert translator._get_helsinki_model_name("en", "es") == "Helsinki-NLP/opus-mt-en-es"
-        assert translator._get_helsinki_model_name("fr", "de") == "Helsinki-NLP/opus-mt-fr-de"
+        assert (
+            translator._get_helsinki_model_name("en", "es")
+            == "Helsinki-NLP/opus-mt-en-es"
+        )
+        assert (
+            translator._get_helsinki_model_name("fr", "de")
+            == "Helsinki-NLP/opus-mt-fr-de"
+        )
 
     def test_get_nllb_model_name_default(self):
         translator = Translator()

@@ -70,7 +70,7 @@ class JobService:
         translation_model: Optional[str] = None,
     ) -> Path:
         """Generate subtitles for a video file.
-        
+
         Parameters
         ----------
         target_lang : Optional[str]

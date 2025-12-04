@@ -21,6 +21,7 @@ class Segment:
 
     Times are in seconds, relative to the start of the audio file.
     """
+
     index: int
     start: float
     end: float
@@ -151,7 +152,7 @@ class Transcriber:
             beam_size=beam_size,
             vad_filter=vad_filter,
         )
-        
+
         # Info may be an object or dict; try to read duration for progress computation
         info_duration = getattr(info, "duration", None)
         if info_duration is None and isinstance(info, dict):
@@ -199,8 +200,7 @@ class Transcriber:
                             logger.debug(f"Progress callback error: {e}")
                     # Also emit JSON-friendly log for web UI consumers (stage is injected by log_stage when present)
                     logger.info(
-                        f"Transcription progress: {pct:.1f}%",
-                        extra={"progress": pct}
+                        f"Transcription progress: {pct:.1f}%", extra={"progress": pct}
                     )
                     last_pct = pct
         logger.info(f"Transcription complete: {len(segments)} segments generated")
@@ -220,7 +220,7 @@ class Transcriber:
             segment_count += 1
             if segment_count % 50 == 0:
                 logger.debug(f"Processed {segment_count} segments...")
-            
+
             yield Segment(
                 index=idx,
                 start=float(seg.start),

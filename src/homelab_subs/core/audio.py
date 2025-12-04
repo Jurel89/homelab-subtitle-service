@@ -55,7 +55,6 @@ class FFmpeg:
                 "  Windows: https://ffmpeg.org/download.html\n"
             )
 
-
     def ensure_available(self) -> None:
         """
         Ensure ffmpeg and ffprobe are available in PATH.
@@ -162,7 +161,8 @@ class FFmpeg:
 
         logger.debug(
             f"Video info: duration={duration:.2f}s, has_audio={has_audio}, has_video={has_video}"
-            if duration else f"Video info: has_audio={has_audio}, has_video={has_video}"
+            if duration
+            else f"Video info: has_audio={has_audio}, has_video={has_video}"
         )
 
         return VideoInfo(
@@ -243,13 +243,13 @@ class FFmpeg:
         # Audio output settings
         cmd.extend(
             [
-                "-vn",              # no video
+                "-vn",  # no video
                 "-acodec",
-                "pcm_s16le",       # 16-bit little-endian PCM
+                "pcm_s16le",  # 16-bit little-endian PCM
                 "-ar",
                 str(sample_rate),  # sample rate
                 "-ac",
-                str(channels),     # channels
+                str(channels),  # channels
                 str(output_path),
             ]
         )
@@ -257,7 +257,9 @@ class FFmpeg:
         self._run(cmd)
 
         if not output_path.is_file():
-            logger.error(f"FFmpeg reported success but output file not found: {output_path}")
+            logger.error(
+                f"FFmpeg reported success but output file not found: {output_path}"
+            )
             raise FFmpegError(
                 f"ffmpeg reported success but output file not found: {output_path}"
             )

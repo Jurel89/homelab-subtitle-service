@@ -28,7 +28,24 @@ TranslationBackend = Literal["helsinki", "nllb"]
 # Common language codes mapping for Helsinki-NLP
 # Helsinki models use format: Helsinki-NLP/opus-mt-{src}-{tgt}
 HELSINKI_LANGUAGE_PAIRS: dict[str, list[str]] = {
-    "en": ["es", "fr", "de", "it", "pt", "nl", "ru", "zh", "ja", "ar", "hi", "pl", "sv", "da", "fi", "no"],
+    "en": [
+        "es",
+        "fr",
+        "de",
+        "it",
+        "pt",
+        "nl",
+        "ru",
+        "zh",
+        "ja",
+        "ar",
+        "hi",
+        "pl",
+        "sv",
+        "da",
+        "fi",
+        "no",
+    ],
     "es": ["en", "fr", "de", "it", "pt"],
     "fr": ["en", "es", "de", "it"],
     "de": ["en", "es", "fr", "it"],
@@ -91,6 +108,7 @@ class SubtitleEntry:
     """
     Represents a single subtitle entry from an SRT file.
     """
+
     index: int
     start_time: str
     end_time: str
@@ -116,6 +134,7 @@ class TranslatorConfig:
     batch_size:
         Number of subtitle lines to translate in one batch.
     """
+
     backend: TranslationBackend = "nllb"
     model_name: Optional[str] = None
     device: str = "cpu"
@@ -202,7 +221,9 @@ class Translator:
 
         except Exception as e:
             logger.error(f"Failed to load translation model: {e}")
-            raise RuntimeError(f"Failed to load translation model '{model_name}': {e}") from e
+            raise RuntimeError(
+                f"Failed to load translation model '{model_name}': {e}"
+            ) from e
 
     def _translate_batch_helsinki(self, texts: list[str]) -> list[str]:
         """Translate a batch of texts using Helsinki-NLP MarianMT."""
@@ -307,12 +328,14 @@ class Translator:
             # Remaining lines are the subtitle text
             text = "\n".join(lines[2:]).strip()
 
-            entries.append(SubtitleEntry(
-                index=index,
-                start_time=start_time,
-                end_time=end_time,
-                text=text,
-            ))
+            entries.append(
+                SubtitleEntry(
+                    index=index,
+                    start_time=start_time,
+                    end_time=end_time,
+                    text=text,
+                )
+            )
 
         return entries
 
@@ -330,7 +353,9 @@ class Translator:
 
     # ---------- Public API ----------
 
-    def get_supported_languages(self, backend: Optional[TranslationBackend] = None) -> list[str]:
+    def get_supported_languages(
+        self, backend: Optional[TranslationBackend] = None
+    ) -> list[str]:
         """
         Get list of supported language codes for a backend.
 
@@ -353,7 +378,10 @@ class Translator:
             return list(NLLB_LANGUAGE_CODES.keys())
 
     def is_language_pair_supported(
-        self, source_lang: str, target_lang: str, backend: Optional[TranslationBackend] = None
+        self,
+        source_lang: str,
+        target_lang: str,
+        backend: Optional[TranslationBackend] = None,
     ) -> bool:
         """
         Check if a language pair is supported.
@@ -378,7 +406,10 @@ class Translator:
             targets = HELSINKI_LANGUAGE_PAIRS.get(source_lang, [])
             return target_lang in targets
         else:
-            return source_lang in NLLB_LANGUAGE_CODES and target_lang in NLLB_LANGUAGE_CODES
+            return (
+                source_lang in NLLB_LANGUAGE_CODES
+                and target_lang in NLLB_LANGUAGE_CODES
+            )
 
     def translate_text(
         self,
@@ -569,6 +600,7 @@ def get_available_backends() -> list[TranslationBackend]:
 
     try:
         import transformers  # noqa: F401
+
         # Both backends use transformers
         backends.extend(["helsinki", "nllb"])
     except ImportError:

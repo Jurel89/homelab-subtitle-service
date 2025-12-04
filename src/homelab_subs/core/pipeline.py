@@ -20,21 +20,35 @@ logger = get_logger(__name__)
 ProgressCallback = Optional[Callable[[float, int], None]]
 
 try:  # pragma: no cover - optional dependency
-    from .performance import PerformanceMonitor as _PerformanceMonitor, SystemMetrics as _SystemMetrics
+    from .performance import (
+        PerformanceMonitor as _PerformanceMonitor,
+        SystemMetrics as _SystemMetrics,
+    )
 except ImportError:  # pragma: no cover - handled gracefully at runtime
     _PerformanceMonitor = None
     _SystemMetrics = None
 
 try:  # pragma: no cover - optional dependency
-    from .db_logger import DatabaseLogger as _DatabaseLogger, JobLog as _JobLog, MetricLog as _MetricLog
+    from .db_logger import (
+        DatabaseLogger as _DatabaseLogger,
+        JobLog as _JobLog,
+        MetricLog as _MetricLog,
+    )
 except ImportError:  # pragma: no cover - handled gracefully at runtime
     _DatabaseLogger = None
     _JobLog = None
     _MetricLog = None
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
-    from .performance import PerformanceMonitor as PerformanceMonitorType, SystemMetrics as SystemMetricsType
-    from .db_logger import DatabaseLogger as DatabaseLoggerType, JobLog as JobLogType, MetricLog as MetricLogType
+    from .performance import (
+        PerformanceMonitor as PerformanceMonitorType,
+        SystemMetrics as SystemMetricsType,
+    )
+    from .db_logger import (
+        DatabaseLogger as DatabaseLoggerType,
+        JobLog as JobLogType,
+        MetricLog as MetricLogType,
+    )
 else:  # pragma: no cover - runtime fallbacks
     PerformanceMonitorType = object
     SystemMetricsType = object
@@ -75,7 +89,7 @@ def _execute_pipeline(
     translation_model: Optional[str] = None,
 ) -> Path:
     """Core subtitle generation steps shared by all runners.
-    
+
     If target_lang is provided and differs from the source language (lang),
     automatic translation will be performed after transcription.
     """
@@ -118,17 +132,17 @@ def _execute_pipeline(
             target_lang,
             extra=context,
         )
-        
+
         # Generate translated output path (e.g., video.en.srt -> video.es.srt)
         translated_output = output_path.with_suffix(f".{target_lang}.srt")
-        
+
         translator_config = TranslatorConfig(
             backend=translation_backend,
             model_name=translation_model,
             device=device,
         )
         translator = Translator(config=translator_config)
-        
+
         with log_stage(logger, "translation", **context):
             translator.translate_srt_file(
                 input_path=result,
@@ -136,7 +150,7 @@ def _execute_pipeline(
                 source_lang=source_lang,
                 target_lang=target_lang,
             )
-        
+
         logger.info("Translation complete: %s", translated_output, extra=context)
         result = translated_output
 
@@ -160,7 +174,7 @@ def generate_subtitles_for_video(
     translation_model: Optional[str] = None,
 ) -> Path:
     """Public API for the minimal pipeline (no monitoring).
-    
+
     Parameters
     ----------
     target_lang : Optional[str]
@@ -304,7 +318,9 @@ class PipelineRunner:
                 )
 
             logger.info(
-                "Pipeline complete for job %s", job_id, extra={**context, "duration": duration}
+                "Pipeline complete for job %s",
+                job_id,
+                extra={**context, "duration": duration},
             )
             return result
 
@@ -320,7 +336,11 @@ class PipelineRunner:
                 )
 
             logger.error(
-                "Pipeline failed for job %s: %s", job_id, exc, extra=context, exc_info=True
+                "Pipeline failed for job %s: %s",
+                job_id,
+                exc,
+                extra=context,
+                exc_info=True,
             )
             raise
 

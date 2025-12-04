@@ -32,6 +32,7 @@ from homelab_subs.core.sync import SubtitleCue
 # Test Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def reference_srt_content() -> str:
     """Reference (human) SRT content for testing."""
@@ -88,6 +89,7 @@ def hypothesis_srt_file(tmp_path: Path, hypothesis_srt_content: str) -> Path:
 # Test Text Normalization and Tokenization
 # =============================================================================
 
+
 class TestNormalization:
     """Tests for text normalization functions."""
 
@@ -138,6 +140,7 @@ class TestTokenization:
 # =============================================================================
 # Test WER and CER Calculation
 # =============================================================================
+
 
 class TestWERCalculation:
     """Tests for Word Error Rate calculation."""
@@ -248,16 +251,14 @@ class TestLevenshteinDistance:
 # Test SubtitleCue Comparison
 # =============================================================================
 
+
 class TestSubtitleCueCreation:
     """Tests for creating SubtitleCue objects."""
 
     def test_subtitle_cue_creation(self):
         """Test basic SubtitleCue creation."""
         cue = SubtitleCue(
-            index=1,
-            start_seconds=1.0,
-            end_seconds=4.0,
-            text="Hello, world!"
+            index=1, start_seconds=1.0, end_seconds=4.0, text="Hello, world!"
         )
         assert cue.index == 1
         assert cue.start_seconds == 1.0
@@ -273,6 +274,7 @@ class TestSubtitleCueCreation:
 # =============================================================================
 # Test SubtitleComparator
 # =============================================================================
+
 
 class TestSubtitleComparator:
     """Tests for SubtitleComparator class."""
@@ -453,6 +455,7 @@ class TestComparisonMetrics:
 # Test Convenience Functions
 # =============================================================================
 
+
 class TestConvenienceFunctions:
     """Tests for module-level convenience functions."""
 
@@ -527,6 +530,7 @@ class TestReportFormatting:
 # Test Edge Cases
 # =============================================================================
 
+
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
@@ -599,6 +603,7 @@ class TestEdgeCases:
 # Test Multi-line Subtitles
 # =============================================================================
 
+
 class TestMultilineSubtitles:
     """Tests for handling multi-line subtitles."""
 
@@ -629,6 +634,7 @@ class TestMultilineSubtitles:
 # =============================================================================
 # Test Timing Accuracy Threshold
 # =============================================================================
+
 
 class TestTimingThreshold:
     """Tests for timing threshold functionality."""

@@ -58,6 +58,7 @@ class MetricLog:
     """
     Represents a single performance metrics snapshot.
     """
+
     job_id: str
     timestamp: datetime
     cpu_percent: float
@@ -69,7 +70,7 @@ class MetricLog:
     gpu_memory_used_mb: Optional[float] = None
     gpu_memory_percent: Optional[float] = None
     gpu_temperature: Optional[float] = None
-    
+
     # Row ID (set by database)
     id: Optional[int] = None
 
@@ -78,11 +79,11 @@ class DatabaseLogger:
     """
     Manages persistent storage of job logs and performance metrics.
     """
-    
+
     def __init__(self, db_path: Path | str = None):
         """
         Initialize database logger.
-        
+
         Parameters
         ----------
         db_path : Path | str, optional
@@ -93,7 +94,7 @@ class DatabaseLogger:
             db_dir = Path.home() / ".homelab-subs"
             db_dir.mkdir(parents=True, exist_ok=True)
             db_path = db_dir / "logs.db"
-        
+
         self.db_path = Path(db_path)
         self._ensure_schema()
         logger.info(f"Database logger initialized: {self.db_path}")
@@ -116,7 +117,7 @@ class DatabaseLogger:
         """Create database tables if they don't exist."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Jobs table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS jobs (
@@ -142,7 +143,7 @@ class DatabaseLogger:
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
             # Metrics table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS metrics (
@@ -161,14 +162,24 @@ class DatabaseLogger:
                     FOREIGN KEY (job_id) REFERENCES jobs (job_id)
                 )
             """)
-            
+
             # Indexes for performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_job_id ON jobs (job_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_started_at ON jobs (started_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_job_id ON metrics (job_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics (timestamp)")
-            
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_job_id ON jobs (job_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_started_at ON jobs (started_at)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_metrics_job_id ON metrics (job_id)"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics (timestamp)"
+            )
+
             # Ensure newer columns exist for legacy databases
             cursor.execute("PRAGMA table_info(jobs)")
             columns = {row[1] for row in cursor.fetchall()}
@@ -180,12 +191,12 @@ class DatabaseLogger:
     def create_job(self, job: JobLog) -> int:
         """
         Create a new job log entry.
-        
+
         Parameters
         ----------
         job : JobLog
             Job information
-            
+
         Returns
         -------
         int
@@ -242,7 +253,7 @@ class DatabaseLogger:
     ):
         """
         Update an existing job log entry.
-        
+
         Parameters
         ----------
         job_id : str
@@ -264,12 +275,20 @@ class DatabaseLogger:
             job_id = job_obj.job_id
 
             status = status if status is not None else job_obj.status
-            completed_at = completed_at if completed_at is not None else job_obj.completed_at
-            error_message = error_message if error_message is not None else job_obj.error_message
-            duration_seconds = (
-                duration_seconds if duration_seconds is not None else job_obj.duration_seconds
+            completed_at = (
+                completed_at if completed_at is not None else job_obj.completed_at
             )
-            output_path = output_path if output_path is not None else job_obj.output_path
+            error_message = (
+                error_message if error_message is not None else job_obj.error_message
+            )
+            duration_seconds = (
+                duration_seconds
+                if duration_seconds is not None
+                else job_obj.duration_seconds
+            )
+            output_path = (
+                output_path if output_path is not None else job_obj.output_path
+            )
             language = language if language is not None else job_obj.language
             model = model if model is not None else job_obj.model
             task = task if task is not None else job_obj.task
@@ -361,7 +380,7 @@ class DatabaseLogger:
 
         values.append(job_id)
         sql = f"UPDATE jobs SET {', '.join(updates)} WHERE job_id = ?"
-        
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(sql, values)
@@ -369,7 +388,7 @@ class DatabaseLogger:
     def add_metric(self, metric: MetricLog):
         """
         Add a performance metrics snapshot.
-        
+
         Parameters
         ----------
         metric : MetricLog
@@ -377,36 +396,39 @@ class DatabaseLogger:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO metrics (
                     job_id, timestamp, cpu_percent, memory_percent,
                     memory_used_mb, disk_read_mb, disk_write_mb,
                     gpu_utilization, gpu_memory_used_mb, gpu_memory_percent,
                     gpu_temperature
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                metric.job_id,
-                metric.timestamp.isoformat(),
-                metric.cpu_percent,
-                metric.memory_percent,
-                metric.memory_used_mb,
-                metric.disk_read_mb,
-                metric.disk_write_mb,
-                metric.gpu_utilization,
-                metric.gpu_memory_used_mb,
-                metric.gpu_memory_percent,
-                metric.gpu_temperature,
-            ))
+            """,
+                (
+                    metric.job_id,
+                    metric.timestamp.isoformat(),
+                    metric.cpu_percent,
+                    metric.memory_percent,
+                    metric.memory_used_mb,
+                    metric.disk_read_mb,
+                    metric.disk_write_mb,
+                    metric.gpu_utilization,
+                    metric.gpu_memory_used_mb,
+                    metric.gpu_memory_percent,
+                    metric.gpu_temperature,
+                ),
+            )
 
     def get_job(self, job_id: str) -> Optional[JobLog]:
         """
         Retrieve a job by ID.
-        
+
         Parameters
         ----------
         job_id : str
             Job identifier
-            
+
         Returns
         -------
         JobLog or None
@@ -416,23 +438,25 @@ class DatabaseLogger:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
             row = cursor.fetchone()
-            
+
             if row is None:
                 return None
-            
+
             return self._row_to_job(row)
 
-    def get_recent_jobs(self, limit: int = 50, status: Optional[str] = None) -> list[JobLog]:
+    def get_recent_jobs(
+        self, limit: int = 50, status: Optional[str] = None
+    ) -> list[JobLog]:
         """
         Get recent jobs, optionally filtered by status.
-        
+
         Parameters
         ----------
         limit : int
             Maximum number of jobs to return
         status : str, optional
             Filter by status (pending, running, completed, failed)
-            
+
         Returns
         -------
         list[JobLog]
@@ -440,29 +464,28 @@ class DatabaseLogger:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             if status:
                 cursor.execute(
                     "SELECT * FROM jobs WHERE status = ? ORDER BY started_at DESC LIMIT ?",
-                    (status, limit)
+                    (status, limit),
                 )
             else:
                 cursor.execute(
-                    "SELECT * FROM jobs ORDER BY started_at DESC LIMIT ?",
-                    (limit,)
+                    "SELECT * FROM jobs ORDER BY started_at DESC LIMIT ?", (limit,)
                 )
-            
+
             return [self._row_to_job(row) for row in cursor.fetchall()]
 
     def get_job_metrics(self, job_id: str) -> list[MetricLog]:
         """
         Get all performance metrics for a job.
-        
+
         Parameters
         ----------
         job_id : str
             Job identifier
-            
+
         Returns
         -------
         list[MetricLog]
@@ -471,15 +494,14 @@ class DatabaseLogger:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT * FROM metrics WHERE job_id = ? ORDER BY timestamp",
-                (job_id,)
+                "SELECT * FROM metrics WHERE job_id = ? ORDER BY timestamp", (job_id,)
             )
             return [self._row_to_metric(row) for row in cursor.fetchall()]
 
     def get_statistics(self) -> dict[str, Any]:
         """
         Get overall statistics about jobs.
-        
+
         Returns
         -------
         dict
@@ -487,11 +509,11 @@ class DatabaseLogger:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Total jobs by status
             cursor.execute("SELECT status, COUNT(*) as count FROM jobs GROUP BY status")
             status_counts = {row["status"]: row["count"] for row in cursor.fetchall()}
-            
+
             # Average durations
             cursor.execute("""
                 SELECT 
@@ -502,7 +524,7 @@ class DatabaseLogger:
                 WHERE duration_seconds IS NOT NULL
             """)
             duration_stats = cursor.fetchone()
-            
+
             # Average performance
             cursor.execute("""
                 SELECT 
@@ -513,7 +535,7 @@ class DatabaseLogger:
                 WHERE cpu_avg IS NOT NULL
             """)
             perf_stats = cursor.fetchone()
-            
+
             return {
                 "total_jobs": sum(status_counts.values()),
                 "status_counts": status_counts,
@@ -539,7 +561,9 @@ class DatabaseLogger:
             task=row["task"],
             device=row["device"] if "device" in keys else None,
             started_at=datetime.fromisoformat(row["started_at"]),
-            completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            completed_at=datetime.fromisoformat(row["completed_at"])
+            if row["completed_at"]
+            else None,
             error_message=row["error_message"],
             duration_seconds=row["duration_seconds"],
             cpu_avg=row["cpu_avg"],

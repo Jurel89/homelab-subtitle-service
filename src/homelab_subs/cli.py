@@ -303,7 +303,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sync.add_argument(
         "--model",
         default="small",
-        help='Whisper model name for timing reference (default: small). '
+        help="Whisper model name for timing reference (default: small). "
         'Use "tiny" for speed or "medium"/"large-v2" for accuracy.',
     )
     sync.add_argument(
@@ -315,7 +315,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--compute-type",
         dest="compute_type",
         default="int8",
-        help='Compute type for faster-whisper. Default: int8',
+        help="Compute type for faster-whisper. Default: int8",
     )
     sync.add_argument(
         "--min-similarity",
@@ -474,6 +474,69 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional log file path for JSON-formatted logs",
     )
 
+    # ---- server ----
+    server = subparsers.add_parser(
+        "server",
+        help="Run the FastAPI server for job queue management.",
+    )
+    server.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind the server (default: 0.0.0.0).",
+    )
+    server.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind the server (default: 8000).",
+    )
+    server.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload for development.",
+    )
+    server.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of uvicorn worker processes (default: 1).",
+    )
+    server.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+
+    # ---- worker ----
+    worker = subparsers.add_parser(
+        "worker",
+        help="Run an RQ worker to process subtitle jobs.",
+    )
+    worker.add_argument(
+        "--queues",
+        nargs="+",
+        default=["high", "default", "low"],
+        help='Queue names to listen on (default: "high default low").',
+    )
+    worker.add_argument(
+        "--burst",
+        action="store_true",
+        help="Run in burst mode (exit when queues are empty).",
+    )
+    worker.add_argument(
+        "--name",
+        help="Worker name for identification.",
+    )
+    worker.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+
     return parser
 
 
@@ -507,7 +570,7 @@ def _run_generate(
 ) -> Path:
     """
     End-to-end generation driven by the JobService orchestrator.
-    
+
     If target_lang is provided and differs from lang, automatic translation
     will be performed after transcription.
     """
@@ -546,8 +609,10 @@ def _run_generate(
 
     # Determine progress bar description based on whether translation will occur
     will_translate = target_lang and target_lang != (lang or "en")
-    progress_desc = "Transcribing" if not will_translate else "Transcribing + Translating"
-    
+    progress_desc = (
+        "Transcribing" if not will_translate else "Transcribing + Translating"
+    )
+
     pbar = tqdm(total=100, unit="%", desc=progress_desc, leave=True)
 
     def progress_cb(pct: float, count: int) -> None:
@@ -577,7 +642,7 @@ def _run_generate(
         )
         pbar.n = 100
         pbar.refresh()
-        
+
         if will_translate:
             logger.info(
                 f"Successfully generated and translated subtitles: {result_path.name}",
@@ -651,7 +716,9 @@ def _run_batch(config_path: Path) -> None:
         output = job.get("output")
         output_path = Path(output) if output else None
 
-        logger.info(f"Processing job {idx}/{len(jobs)}: {video.name}", extra={"job_id": job_id})
+        logger.info(
+            f"Processing job {idx}/{len(jobs)}: {video.name}", extra={"job_id": job_id}
+        )
 
         try:
             srt_path = _run_generate(
@@ -666,10 +733,15 @@ def _run_batch(config_path: Path) -> None:
                 vad_filter=vad_filter,
                 job_id=job_id,
             )
-            logger.info(f"Job {idx} completed successfully: {srt_path}", extra={"job_id": job_id})
+            logger.info(
+                f"Job {idx} completed successfully: {srt_path}",
+                extra={"job_id": job_id},
+            )
             successful += 1
         except Exception as exc:
-            logger.error(f"Job {idx} failed: {exc}", extra={"job_id": job_id}, exc_info=True)
+            logger.error(
+                f"Job {idx} failed: {exc}", extra={"job_id": job_id}, exc_info=True
+            )
             failed += 1
 
     logger.info(f"Batch processing complete: {successful} successful, {failed} failed")
@@ -701,9 +773,9 @@ def _run_history(
             job = details["job"]
             metrics = details["metrics"]
 
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print(f"Job Details: {job_id}")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
             print(f"Video:      {job.video_path}")
             print(f"Output:     {job.output_path}")
             print(f"Status:     {job.status}")
@@ -712,35 +784,63 @@ def _run_history(
             print(f"Task:       {job.task}")
             print(f"Started:    {job.started_at}")
             print(f"Completed:  {job.completed_at or 'N/A'}")
-            print(f"Duration:   {job.duration_seconds:.2f}s" if job.duration_seconds else "Duration:   N/A")
+            print(
+                f"Duration:   {job.duration_seconds:.2f}s"
+                if job.duration_seconds
+                else "Duration:   N/A"
+            )
 
             if job.error_message:
                 print(f"Error:      {job.error_message}")
 
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print("Performance Summary")
-            print(f"{'='*80}")
-            print(f"CPU Avg:    {job.cpu_avg:.1f}%" if job.cpu_avg else "CPU Avg:    N/A")
-            print(f"CPU Max:    {job.cpu_max:.1f}%" if job.cpu_max else "CPU Max:    N/A")
-            print(f"Memory Avg: {job.memory_avg_mb:.1f} MB" if job.memory_avg_mb else "Memory Avg: N/A")
-            print(f"Memory Max: {job.memory_max_mb:.1f} MB" if job.memory_max_mb else "Memory Max: N/A")
-            print(f"GPU Avg:    {job.gpu_avg:.1f}%" if job.gpu_avg else "GPU Avg:    N/A")
-            print(f"GPU Max:    {job.gpu_max:.1f}%" if job.gpu_max else "GPU Max:    N/A")
+            print(f"{'=' * 80}")
+            print(
+                f"CPU Avg:    {job.cpu_avg:.1f}%" if job.cpu_avg else "CPU Avg:    N/A"
+            )
+            print(
+                f"CPU Max:    {job.cpu_max:.1f}%" if job.cpu_max else "CPU Max:    N/A"
+            )
+            print(
+                f"Memory Avg: {job.memory_avg_mb:.1f} MB"
+                if job.memory_avg_mb
+                else "Memory Avg: N/A"
+            )
+            print(
+                f"Memory Max: {job.memory_max_mb:.1f} MB"
+                if job.memory_max_mb
+                else "Memory Max: N/A"
+            )
+            print(
+                f"GPU Avg:    {job.gpu_avg:.1f}%" if job.gpu_avg else "GPU Avg:    N/A"
+            )
+            print(
+                f"GPU Max:    {job.gpu_max:.1f}%" if job.gpu_max else "GPU Max:    N/A"
+            )
 
             if metrics:
-                print(f"\n{'='*80}")
+                print(f"\n{'=' * 80}")
                 print(f"Metrics Timeline ({len(metrics)} samples)")
-                print(f"{'='*80}")
-                print(f"{'Time':>8} | {'CPU%':>6} | {'Memory%':>8} | {'GPU%':>6} | {'GPU Mem MB':>10}")
-                print(f"{'-'*8}-+-{'-'*6}-+-{'-'*8}-+-{'-'*6}-+-{'-'*10}")
+                print(f"{'=' * 80}")
+                print(
+                    f"{'Time':>8} | {'CPU%':>6} | {'Memory%':>8} | {'GPU%':>6} | {'GPU Mem MB':>10}"
+                )
+                print(f"{'-' * 8}-+-{'-' * 6}-+-{'-' * 8}-+-{'-' * 6}-+-{'-' * 10}")
 
                 for i, m in enumerate(metrics):
                     if i >= 10:
                         print(f"... ({len(metrics) - 10} more samples)")
                         break
                     time_str = m.timestamp.strftime("%H:%M:%S")
-                    gpu_str = f"{m.gpu_utilization:>6.1f}" if m.gpu_utilization else "   N/A"
-                    gpu_mem_str = f"{m.gpu_memory_used_mb:>10.1f}" if m.gpu_memory_used_mb else "       N/A"
+                    gpu_str = (
+                        f"{m.gpu_utilization:>6.1f}" if m.gpu_utilization else "   N/A"
+                    )
+                    gpu_mem_str = (
+                        f"{m.gpu_memory_used_mb:>10.1f}"
+                        if m.gpu_memory_used_mb
+                        else "       N/A"
+                    )
                     print(
                         f"{time_str} | {m.cpu_percent:>6.1f} | {m.memory_percent:>8.1f} | {gpu_str} | {gpu_mem_str}"
                     )
@@ -751,9 +851,9 @@ def _run_history(
         if show_stats:
             stats = service.get_statistics()
 
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print("Overall Statistics")
-            print(f"{'='*80}")
+            print(f"{'=' * 80}")
             print(f"Total Jobs: {stats['total_jobs']}")
             print("\nStatus Breakdown:")
             for status_name, count in stats["status_counts"].items():
@@ -781,18 +881,24 @@ def _run_history(
             print(f"\nNo jobs found{' with status: ' + status if status else ''}.")
             return
 
-        print(f"\n{'='*120}")
+        print(f"\n{'=' * 120}")
         print(f"Recent Jobs ({len(jobs)}{' with status: ' + status if status else ''})")
-        print(f"{'='*120}")
-        print(f"{'Job ID':>10} | {'Status':>10} | {'Video':45} | {'Duration':>10} | {'CPU Avg':>8} | {'Mem Avg':>9}")
-        print(f"{'-'*10}-+-{'-'*10}-+-{'-'*45}-+-{'-'*10}-+-{'-'*8}-+-{'-'*9}")
+        print(f"{'=' * 120}")
+        print(
+            f"{'Job ID':>10} | {'Status':>10} | {'Video':45} | {'Duration':>10} | {'CPU Avg':>8} | {'Mem Avg':>9}"
+        )
+        print(
+            f"{'-' * 10}-+-{'-' * 10}-+-{'-' * 45}-+-{'-' * 10}-+-{'-' * 8}-+-{'-' * 9}"
+        )
 
         for job in jobs:
             video_name = Path(job.video_path).name
             if len(video_name) > 45:
                 video_name = video_name[:42] + "..."
 
-            duration_str = f"{job.duration_seconds:.2f}s" if job.duration_seconds else "N/A"
+            duration_str = (
+                f"{job.duration_seconds:.2f}s" if job.duration_seconds else "N/A"
+            )
             cpu_str = f"{job.cpu_avg:.1f}%" if job.cpu_avg else "N/A"
             mem_str = f"{job.memory_avg_mb:.0f} MB" if job.memory_avg_mb else "N/A"
 
@@ -800,7 +906,9 @@ def _run_history(
                 f"{job.job_id:>10} | {job.status:>10} | {video_name:45} | {duration_str:>10} | {cpu_str:>8} | {mem_str:>9}"
             )
 
-        print("\nUse 'subsvc history --job-id <id>' to see detailed metrics for a specific job.")
+        print(
+            "\nUse 'subsvc history --job-id <id>' to see detailed metrics for a specific job."
+        )
         print()
 
     except RuntimeError as exc:
@@ -901,9 +1009,9 @@ def _run_list_languages(backend: str) -> None:
     languages = list_supported_languages(backend)  # type: ignore[arg-type]
 
     print(f"\nSupported languages for '{backend}' backend:")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     print(f"{'Code':<8} | {'Language':<30}")
-    print(f"{'-'*8}-+-{'-'*30}")
+    print(f"{'-' * 8}-+-{'-' * 30}")
 
     for code, name in sorted(languages.items()):
         print(f"{code:<8} | {name:<30}")
@@ -968,9 +1076,9 @@ def _run_sync(
         pbar.close()
 
     # Print summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Synchronization Summary")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Total subtitles:     {len(result.synced_cues)}")
     print(f"Matched:             {result.matched_count}")
     print(f"Interpolated:        {result.interpolated_count}")
@@ -1025,7 +1133,9 @@ def _run_compare(
         # JSON output
         output_data = {
             "reference": str(result.reference_path) if result.reference_path else None,
-            "hypothesis": str(result.hypothesis_path) if result.hypothesis_path else None,
+            "hypothesis": str(result.hypothesis_path)
+            if result.hypothesis_path
+            else None,
             "overall_score": result.overall_score,
             "text_metrics": {
                 "word_error_rate": result.text_metrics.word_error_rate,
@@ -1132,7 +1242,9 @@ def _run_benchmark(
             # Measure generation time
             start_time = time.time()
 
-            pbar = tqdm(total=100, unit="%", desc=f"Transcribing ({config_id})", leave=False)
+            pbar = tqdm(
+                total=100, unit="%", desc=f"Transcribing ({config_id})", leave=False
+            )
 
             def progress_cb(pct: float, count: int) -> None:
                 pbar.n = int(pct)
@@ -1156,12 +1268,14 @@ def _run_benchmark(
             except Exception as exc:
                 pbar.close()
                 logger.error(f"Configuration {config_id} failed: {exc}", extra=context)
-                results.append({
-                    "model": model_name,
-                    "compute_type": compute_type,
-                    "status": "failed",
-                    "error": str(exc),
-                })
+                results.append(
+                    {
+                        "model": model_name,
+                        "compute_type": compute_type,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
                 continue
 
             generation_time = time.time() - start_time
@@ -1177,9 +1291,13 @@ def _run_benchmark(
                 "generation_time_seconds": round(generation_time, 2),
                 "overall_score": round(comparison.overall_score, 2),
                 "word_error_rate": round(comparison.text_metrics.word_error_rate, 4),
-                "character_error_rate": round(comparison.text_metrics.character_error_rate, 4),
+                "character_error_rate": round(
+                    comparison.text_metrics.character_error_rate, 4
+                ),
                 "avg_similarity": round(comparison.text_metrics.avg_similarity, 4),
-                "timing_accuracy_pct": round(comparison.timing_metrics.timing_accuracy_pct, 2),
+                "timing_accuracy_pct": round(
+                    comparison.timing_metrics.timing_accuracy_pct, 2
+                ),
             }
             results.append(result_entry)
 
@@ -1205,8 +1323,22 @@ def _run_benchmark(
         }
         print(json.dumps(summary, indent=2))
     else:
-        print(f"{'Model':<15} | {'Compute':<12} | {'Score':>8} | {'WER':>8} | {'Time (s)':>10} | {'Status':<10}")
-        print("-" * 15 + "-+-" + "-" * 12 + "-+-" + "-" * 8 + "-+-" + "-" * 8 + "-+-" + "-" * 10 + "-+-" + "-" * 10)
+        print(
+            f"{'Model':<15} | {'Compute':<12} | {'Score':>8} | {'WER':>8} | {'Time (s)':>10} | {'Status':<10}"
+        )
+        print(
+            "-" * 15
+            + "-+-"
+            + "-" * 12
+            + "-+-"
+            + "-" * 8
+            + "-+-"
+            + "-" * 8
+            + "-+-"
+            + "-" * 10
+            + "-+-"
+            + "-" * 10
+        )
 
         for r in results:
             if r["status"] == "success":
@@ -1228,10 +1360,14 @@ def _run_benchmark(
             best_speed = min(successful, key=lambda x: x["generation_time_seconds"])
 
             print("\n" + "-" * 80)
-            print(f"Best Quality:  {best_score['model']} / {best_score['compute_type']} "
-                  f"(score: {best_score['overall_score']:.1f}, WER: {best_score['word_error_rate']:.2%})")
-            print(f"Fastest:       {best_speed['model']} / {best_speed['compute_type']} "
-                  f"(time: {best_speed['generation_time_seconds']:.1f}s, score: {best_speed['overall_score']:.1f})")
+            print(
+                f"Best Quality:  {best_score['model']} / {best_score['compute_type']} "
+                f"(score: {best_score['overall_score']:.1f}, WER: {best_score['word_error_rate']:.2%})"
+            )
+            print(
+                f"Fastest:       {best_speed['model']} / {best_speed['compute_type']} "
+                f"(time: {best_speed['generation_time_seconds']:.1f}s, score: {best_speed['overall_score']:.1f})"
+            )
 
     print()
 
@@ -1246,6 +1382,67 @@ def _run_benchmark(
     }
     report_path.write_text(json.dumps(report_data, indent=2))
     logger.info(f"Benchmark report saved to: {report_path}", extra=context)
+
+
+def _run_server(
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    reload: bool = False,
+    workers: int = 1,
+) -> None:
+    """
+    Run the FastAPI server for job queue management.
+
+    Requires the 'server' optional dependencies to be installed:
+        pip install homelab-subs[server]
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        logger.error(
+            "Server dependencies not installed. "
+            "Install with: pip install homelab-subs[server]"
+        )
+        raise SystemExit(1)
+
+    logger.info(f"Starting server at http://{host}:{port}")
+    logger.info("API docs available at http://{host}:{port}/docs")
+
+    uvicorn.run(
+        "homelab_subs.server.api:app",
+        host=host,
+        port=port,
+        reload=reload,
+        workers=workers if not reload else 1,
+        log_level="info",
+    )
+
+
+def _run_worker(
+    queues: list[str],
+    burst: bool = False,
+    name: Optional[str] = None,
+) -> None:
+    """
+    Run an RQ worker to process subtitle generation jobs.
+
+    Requires the 'server' optional dependencies to be installed:
+        pip install homelab-subs[server]
+    """
+    try:
+        from homelab_subs.server.worker import run_worker
+    except ImportError:
+        logger.error(
+            "Server dependencies not installed. "
+            "Install with: pip install homelab-subs[server]"
+        )
+        raise SystemExit(1)
+
+    logger.info(f"Starting worker on queues: {queues}")
+    if burst:
+        logger.info("Running in burst mode (will exit when queues empty)")
+
+    run_worker(queues=queues, burst=burst, name=name)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -1349,6 +1546,23 @@ def main(argv: Optional[list[str]] = None) -> int:
                 timing_threshold=args.timing_threshold,
                 output_dir=args.output_dir,
                 output_json=args.output_json,
+            )
+            return 0
+
+        if args.command == "server":
+            _run_server(
+                host=args.host,
+                port=args.port,
+                reload=args.reload,
+                workers=args.workers,
+            )
+            return 0
+
+        if args.command == "worker":
+            _run_worker(
+                queues=args.queues,
+                burst=args.burst,
+                name=args.name,
             )
             return 0
 

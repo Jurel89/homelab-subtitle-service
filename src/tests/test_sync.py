@@ -233,12 +233,12 @@ class TestSRTWriting:
             SubtitleCue(index=2, start_seconds=4.0, end_seconds=6.0, text="Second"),
         ]
         output_path = tmp_path / "output.srt"
-        
+
         result = write_srt_from_cues(cues, output_path)
-        
+
         assert result == output_path
         assert output_path.exists()
-        
+
         content = output_path.read_text()
         assert "00:00:01,000 --> 00:00:03,000" in content
         assert "First" in content
@@ -248,9 +248,9 @@ class TestSRTWriting:
         """Test that writing creates parent directories."""
         output_path = tmp_path / "deep" / "nested" / "output.srt"
         cues = [SubtitleCue(index=1, start_seconds=0, end_seconds=1, text="Test")]
-        
+
         write_srt_from_cues(cues, output_path)
-        
+
         assert output_path.exists()
 
 
@@ -299,7 +299,7 @@ class TestSubtitleSyncer:
     def test_sync_subtitles_file_not_found(self, mock_transcribe, tmp_path):
         """Test sync with non-existent files."""
         syncer = SubtitleSyncer()
-        
+
         with pytest.raises(FileNotFoundError, match="Video file not found"):
             syncer.sync_subtitles(
                 video_path=Path("/nonexistent/video.mp4"),
@@ -311,9 +311,9 @@ class TestSubtitleSyncer:
         """Test sync with non-existent SRT file."""
         video_file = tmp_path / "video.mp4"
         video_file.touch()
-        
+
         syncer = SubtitleSyncer()
-        
+
         with pytest.raises(FileNotFoundError, match="SRT file not found"):
             syncer.sync_subtitles(
                 video_path=video_file,
@@ -350,7 +350,7 @@ class TestIntegration:
     def test_full_sync_workflow(self, mock_transcribe, tmp_path):
         """Test complete sync workflow with mocked transcription."""
         from homelab_subs.core.transcription import Segment
-        
+
         # Create mock transcription segments
         mock_segments = [
             Segment(index=0, start=1.0, end=3.0, text="Hello World"),
@@ -358,7 +358,7 @@ class TestIntegration:
             Segment(index=2, start=10.0, end=12.0, text="Goodbye"),
         ]
         mock_transcribe.return_value = mock_segments
-        
+
         # Create input SRT with offset timing
         srt_content = """1
 00:00:02,000 --> 00:00:04,000
@@ -374,22 +374,22 @@ Goodbye
 """
         srt_file = tmp_path / "input.srt"
         srt_file.write_text(srt_content)
-        
+
         # Create dummy video file
         video_file = tmp_path / "video.mp4"
         video_file.touch()
-        
+
         # Run sync
         syncer = SubtitleSyncer(SyncConfig(min_similarity=0.8))
         result = syncer.sync_subtitles(
             video_path=video_file,
             srt_path=srt_file,
         )
-        
+
         # Verify results
         assert result.matched_count >= 2  # Should match at least some
         assert len(result.synced_cues) == 3
-        
+
         # Check output file was created
         output_file = srt_file.with_suffix(".synced.srt")
         assert output_file.exists()
@@ -398,27 +398,27 @@ Goodbye
     def test_sync_with_custom_output_path(self, mock_transcribe, tmp_path):
         """Test sync with custom output path."""
         from homelab_subs.core.transcription import Segment
-        
+
         mock_transcribe.return_value = [
             Segment(index=0, start=1.0, end=3.0, text="Test"),
         ]
-        
+
         srt_file = tmp_path / "input.srt"
         srt_file.write_text("""1
 00:00:01,000 --> 00:00:03,000
 Test
 """)
-        
+
         video_file = tmp_path / "video.mp4"
         video_file.touch()
-        
+
         custom_output = tmp_path / "custom_output.srt"
-        
+
         syncer = SubtitleSyncer()
         syncer.sync_subtitles(
             video_path=video_file,
             srt_path=srt_file,
             output_path=custom_output,
         )
-        
+
         assert custom_output.exists()

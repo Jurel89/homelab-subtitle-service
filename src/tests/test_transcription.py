@@ -21,7 +21,9 @@ class FakeWhisperModel:
     def __init__(self, *args, **kwargs):
         self.called_with = (args, kwargs)
 
-    def transcribe(self, audio_path, language=None, task=None, beam_size=None, vad_filter=None):
+    def transcribe(
+        self, audio_path, language=None, task=None, beam_size=None, vad_filter=None
+    ):
         segments = [
             FakeWhisperSegment(0.0, 1.0, "Hello"),
             FakeWhisperSegment(1.0, 2.0, "World"),
@@ -41,7 +43,9 @@ def test_transcriber_uses_model(monkeypatch, tmp_path):
     def fake_whisper_model_constructor(model_name, **kwargs):
         return FakeWhisperModel(model_name, **kwargs)
 
-    monkeypatch.setattr(transcription_module, "WhisperModel", fake_whisper_model_constructor)
+    monkeypatch.setattr(
+        transcription_module, "WhisperModel", fake_whisper_model_constructor
+    )
 
     config = TranscriberConfig(model_name="small", device="cpu", compute_type="int8")
     transcriber = Transcriber(config=config)

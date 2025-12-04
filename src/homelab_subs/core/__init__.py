@@ -40,6 +40,7 @@ try:
         NLLB_LANGUAGE_CODES,
         HELSINKI_LANGUAGE_PAIRS,
     )
+
     TRANSLATION_AVAILABLE = True
 except ImportError:
     TRANSLATION_AVAILABLE = False
