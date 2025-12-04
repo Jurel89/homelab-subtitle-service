@@ -17,11 +17,37 @@ from .services.job_service import JobService
 
 logger = get_logger(__name__)
 
+__version__ = "0.3.0"
+
+# ASCII Art Logo
+LOGO = r"""
+   _____ __  ______  _____ _    ________
+  / ___// / / / __ )/ ___/| |  / / ____/
+  \__ \/ / / / __  |\__ \ | | / / /     
+ ___/ / /_/ / /_/ /___/ / | |/ / /___   
+/____/\____/_____//____/  |___/\____/   
+                                        
+  🎬 Homelab Subtitle Service
+"""
+
+BANNER = f"""{LOGO}
+  Version: {__version__}
+  Generate subtitles with Whisper AI
+  ─────────────────────────────────────
+"""
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="subsvc",
-        description="Generate subtitles from video files using ffmpeg and faster-whisper.",
+        description=BANNER,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}\n{LOGO}",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
