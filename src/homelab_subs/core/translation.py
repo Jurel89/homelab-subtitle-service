@@ -210,8 +210,9 @@ class Translator:
         )
 
         try:
-            self._tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+            # nosec B615 - Model names are validated in config; revision pinning not feasible for user-specified models
+            self._tokenizer = AutoTokenizer.from_pretrained(model_name)  # nosec B615
+            self._model = AutoModelForSeq2SeqLM.from_pretrained(model_name)  # nosec B615
 
             if self.config.device == "cuda":
                 self._model = self._model.cuda()

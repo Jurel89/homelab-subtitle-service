@@ -507,8 +507,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     server.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Host to bind the server (default: 0.0.0.0).",
+        default="127.0.0.1",  # nosec B104 - Configurable via CLI, localhost by default for security
+        help="Host to bind the server (default: 127.0.0.1). Use 0.0.0.0 to bind to all interfaces.",
     )
     server.add_argument(
         "--port",
@@ -1411,7 +1411,7 @@ def _run_benchmark(
 
 
 def _run_server(
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",  # nosec B104 - Configurable via CLI argument
     port: int = 8000,
     reload: bool = False,
     workers: int = 1,

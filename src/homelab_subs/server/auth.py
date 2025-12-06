@@ -13,6 +13,8 @@ Provides:
 from __future__ import annotations
 
 import logging
+import os
+import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
@@ -37,9 +39,19 @@ logger = logging.getLogger(__name__)
 # Configuration
 # =============================================================================
 
-# JWT Settings - these should come from environment in production
-JWT_SECRET_KEY = "your-secret-key-change-in-production"  # noqa: S105
+# JWT Settings - MUST be set via environment variable in production
+_DEFAULT_SECRET = "your-secret-key-change-in-production"  # nosec B105 - Fallback only
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", _DEFAULT_SECRET)
 JWT_ALGORITHM = "HS256"
+
+# Warn if using default secret in non-development mode
+if JWT_SECRET_KEY == _DEFAULT_SECRET:
+    warnings.warn(
+        "JWT_SECRET_KEY environment variable not set. Using insecure default. "
+        "Set JWT_SECRET_KEY in production!",
+        UserWarning,
+        stacklevel=1,
+    )
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
@@ -251,7 +263,7 @@ def create_token_pair(
     return TokenPair(
         access_token=access_token,
         refresh_token=refresh_token,
-        token_type="bearer",
+        token_type="bearer",  # nosec B106 - OAuth2 standard token type, not a password
         expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 

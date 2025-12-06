@@ -74,8 +74,7 @@ class FFmpeg:
         """
         logger.debug(f"Running command: {' '.join(cmd)}")
         try:
-            # nosec B603 - Commands are constructed internally from validated paths/args, not user input
-            result = subprocess.run(
+            result = subprocess.run(  # nosec B603 - Commands constructed from validated paths
                 cmd,
                 check=True,
                 stdout=subprocess.PIPE,
