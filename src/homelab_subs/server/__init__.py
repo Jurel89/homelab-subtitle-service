@@ -7,10 +7,11 @@ This module provides:
 - FastAPI web application for REST API
 - RQ-based job queue for background processing
 - PostgreSQL-backed job persistence
+- Authentication and authorization
 - Web UI for monitoring and management
 """
 
-from .models import Job, JobStatus, JobType, JobStage
+from .models import Job, JobStatus, JobType, JobStage, User, GlobalSettings
 from .settings import Settings, get_settings
 
 __all__ = [
@@ -18,6 +19,8 @@ __all__ = [
     "JobStatus",
     "JobType",
     "JobStage",
+    "User",
+    "GlobalSettings",
     "Settings",
     "get_settings",
 ]

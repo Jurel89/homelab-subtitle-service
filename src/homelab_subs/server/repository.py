@@ -30,6 +30,8 @@ from .models import (
     JobStatus,
     JobType,
     JobStage,
+    User,
+    GlobalSettings,
     SQLALCHEMY_AVAILABLE as MODELS_AVAILABLE,
 )
 from .settings import Settings, get_settings
@@ -622,3 +624,443 @@ class JobRepository:
 # Import func for statistics (SQLAlchemy)
 if SQLALCHEMY_AVAILABLE:
     from sqlalchemy import func
+
+
+class UserRepository:
+    """
+    Repository for managing User entities in PostgreSQL.
+
+    This class provides all database operations for users including:
+    - Creating new users (with password hashing)
+    - User authentication
+    - Updating user information
+
+    Parameters
+    ----------
+    database_url : str, optional
+        PostgreSQL connection URL. If not provided, uses settings.
+    settings : Settings, optional
+        Application settings.
+
+    Examples
+    --------
+    >>> repo = UserRepository()
+    >>> user = repo.create_user("admin", "SecurePass123")
+    >>> authenticated = repo.authenticate("admin", "SecurePass123")
+    """
+
+    def __init__(
+        self,
+        database_url: Optional[str] = None,
+        settings: Optional[Settings] = None,
+    ) -> None:
+        if not SQLALCHEMY_AVAILABLE or not MODELS_AVAILABLE:
+            raise RuntimeError(
+                "SQLAlchemy is required for UserRepository. "
+                "Install with: pip install homelab-subtitle-service[server]"
+            )
+
+        self._settings = settings or get_settings()
+        self._database_url = database_url or self._settings.database_url
+
+        self._engine = create_engine(
+            self._database_url,
+            echo=self._settings.log_level == "DEBUG",
+            pool_pre_ping=True,
+        )
+        self._session_factory = sessionmaker(bind=self._engine)
+
+        logger.info("UserRepository initialized")
+
+    @contextmanager
+    def session(self) -> Generator[Session, None, None]:
+        """Context manager for database sessions."""
+        session = self._session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def create_user(
+        self,
+        username: str,
+        password: str,
+        is_admin: bool = False,
+    ) -> User:
+        """
+        Create a new user with hashed password.
+
+        Parameters
+        ----------
+        username : str
+            Unique username.
+        password : str
+            Plain text password (will be hashed).
+        is_admin : bool
+            Whether user has admin privileges.
+
+        Returns
+        -------
+        User
+            The created user entity.
+
+        Raises
+        ------
+        ValueError
+            If username already exists.
+        """
+        from .auth import hash_password, validate_password_strength
+
+        # Validate password strength
+        validate_password_strength(password)
+
+        # Hash the password
+        password_hash = hash_password(password)
+
+        user = User(
+            username=username,
+            password_hash=password_hash,
+            is_admin=is_admin,
+            is_active=True,
+        )
+
+        with self.session() as session:
+            # Check if username exists
+            existing = session.scalar(select(User).where(User.username == username))
+            if existing:
+                raise ValueError(f"Username '{username}' already exists")
+
+            session.add(user)
+            session.flush()
+            user_id = user.id
+
+        logger.info(f"Created user '{username}' (admin={is_admin})")
+        return self.get_user_by_id(user_id)
+
+    def get_user_by_id(self, user_id: uuid.UUID | str) -> Optional[User]:
+        """Get a user by their ID."""
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user:
+                session.expunge(user)
+            return user
+
+    def get_user_by_username(self, username: str) -> Optional[User]:
+        """Get a user by their username."""
+        with self.session() as session:
+            user = session.scalar(select(User).where(User.username == username))
+            if user:
+                session.expunge(user)
+            return user
+
+    def authenticate(self, username: str, password: str) -> Optional[User]:
+        """
+        Authenticate a user with username and password.
+
+        Parameters
+        ----------
+        username : str
+            Username to authenticate.
+        password : str
+            Plain text password.
+
+        Returns
+        -------
+        User or None
+            The authenticated user if credentials are valid, None otherwise.
+        """
+        from .auth import verify_password
+
+        user = self.get_user_by_username(username)
+
+        if user is None:
+            logger.warning(f"Authentication failed: user '{username}' not found")
+            return None
+
+        if not user.is_active:
+            logger.warning(f"Authentication failed: user '{username}' is inactive")
+            return None
+
+        if not verify_password(password, user.password_hash):
+            logger.warning(f"Authentication failed: invalid password for '{username}'")
+            return None
+
+        # Update last login
+        self.update_last_login(user.id)
+
+        logger.info(f"User '{username}' authenticated successfully")
+        return user
+
+    def update_last_login(self, user_id: uuid.UUID | str) -> None:
+        """Update user's last login timestamp."""
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user:
+                user.last_login = datetime.utcnow()
+
+    def update_password(
+        self,
+        user_id: uuid.UUID | str,
+        new_password: str,
+    ) -> bool:
+        """
+        Update a user's password.
+
+        Parameters
+        ----------
+        user_id : UUID or str
+            User ID.
+        new_password : str
+            New plain text password (will be hashed).
+
+        Returns
+        -------
+        bool
+            True if password was updated, False if user not found.
+        """
+        from .auth import hash_password, validate_password_strength
+
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        # Validate password strength
+        validate_password_strength(new_password)
+
+        password_hash = hash_password(new_password)
+
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if not user:
+                return False
+
+            user.password_hash = password_hash
+
+        logger.info(f"Password updated for user {user_id}")
+        return True
+
+    def set_user_active(self, user_id: uuid.UUID | str, is_active: bool) -> bool:
+        """Enable or disable a user account."""
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if not user:
+                return False
+
+            user.is_active = is_active
+
+        logger.info(f"User {user_id} active status set to {is_active}")
+        return True
+
+    def count_users(self) -> int:
+        """Get total number of users."""
+        with self.session() as session:
+            if SQLALCHEMY_AVAILABLE:
+                count = session.scalar(select(func.count(User.id)))
+                return count or 0
+            return 0
+
+    def has_any_users(self) -> bool:
+        """Check if any users exist (for first-time setup)."""
+        return self.count_users() > 0
+
+
+class SettingsRepository:
+    """
+    Repository for managing GlobalSettings in PostgreSQL.
+
+    GlobalSettings uses a singleton pattern - there's only one row
+    with id=1 that contains all server-wide settings.
+
+    Parameters
+    ----------
+    database_url : str, optional
+        PostgreSQL connection URL.
+    settings : Settings, optional
+        Application settings.
+
+    Examples
+    --------
+    >>> repo = SettingsRepository()
+    >>> settings = repo.get_settings()
+    >>> repo.update_settings(worker_count=4, prefer_gpu=True)
+    """
+
+    def __init__(
+        self,
+        database_url: Optional[str] = None,
+        settings: Optional[Settings] = None,
+    ) -> None:
+        if not SQLALCHEMY_AVAILABLE or not MODELS_AVAILABLE:
+            raise RuntimeError(
+                "SQLAlchemy is required for SettingsRepository. "
+                "Install with: pip install homelab-subtitle-service[server]"
+            )
+
+        self._settings = settings or get_settings()
+        self._database_url = database_url or self._settings.database_url
+
+        self._engine = create_engine(
+            self._database_url,
+            echo=self._settings.log_level == "DEBUG",
+            pool_pre_ping=True,
+        )
+        self._session_factory = sessionmaker(bind=self._engine)
+
+        logger.info("SettingsRepository initialized")
+
+    @contextmanager
+    def session(self) -> Generator[Session, None, None]:
+        """Context manager for database sessions."""
+        session = self._session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def get_settings(self) -> GlobalSettings:
+        """
+        Get the global settings.
+
+        Creates default settings if none exist.
+
+        Returns
+        -------
+        GlobalSettings
+            The server-wide settings.
+        """
+        with self.session() as session:
+            settings = session.get(GlobalSettings, 1)
+
+            if settings is None:
+                # Create default settings
+                settings = GlobalSettings()
+                session.add(settings)
+                session.flush()
+                logger.info("Created default global settings")
+
+            session.expunge(settings)
+            return settings
+
+    def update_settings(self, **kwargs: Any) -> GlobalSettings:
+        """
+        Update global settings.
+
+        Parameters
+        ----------
+        **kwargs
+            Settings fields to update. Valid fields:
+            - media_folders: list[str]
+            - default_model: str
+            - default_device: str
+            - default_compute_type: str
+            - default_language: str
+            - default_translation_backend: str
+            - worker_count: int
+            - log_retention_days: int
+            - job_retention_days: int
+            - prefer_gpu: bool
+
+        Returns
+        -------
+        GlobalSettings
+            The updated settings.
+
+        Raises
+        ------
+        ValueError
+            If an invalid setting field is provided.
+        """
+        valid_fields = {
+            "media_folders",
+            "default_model",
+            "default_device",
+            "default_compute_type",
+            "default_language",
+            "default_translation_backend",
+            "worker_count",
+            "log_retention_days",
+            "job_retention_days",
+            "prefer_gpu",
+        }
+
+        invalid_fields = set(kwargs.keys()) - valid_fields
+        if invalid_fields:
+            raise ValueError(f"Invalid settings fields: {invalid_fields}")
+
+        with self.session() as session:
+            settings = session.get(GlobalSettings, 1)
+
+            if settings is None:
+                settings = GlobalSettings()
+                session.add(settings)
+
+            for field, value in kwargs.items():
+                setattr(settings, field, value)
+
+            settings.updated_at = datetime.utcnow()
+            session.flush()
+
+        logger.info(f"Updated global settings: {list(kwargs.keys())}")
+        return self.get_settings()
+
+    def add_media_folder(self, folder_path: str) -> GlobalSettings:
+        """
+        Add a media folder to the allowed list.
+
+        Parameters
+        ----------
+        folder_path : str
+            Absolute path to media folder.
+
+        Returns
+        -------
+        GlobalSettings
+            The updated settings.
+        """
+        settings = self.get_settings()
+        folders = list(settings.media_folders)
+
+        if folder_path not in folders:
+            folders.append(folder_path)
+            return self.update_settings(media_folders=folders)
+
+        return settings
+
+    def remove_media_folder(self, folder_path: str) -> GlobalSettings:
+        """
+        Remove a media folder from the allowed list.
+
+        Parameters
+        ----------
+        folder_path : str
+            Path to remove.
+
+        Returns
+        -------
+        GlobalSettings
+            The updated settings.
+        """
+        settings = self.get_settings()
+        folders = list(settings.media_folders)
+
+        if folder_path in folders:
+            folders.remove(folder_path)
+            return self.update_settings(media_folders=folders)
+
+        return settings

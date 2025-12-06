@@ -56,6 +56,9 @@ server = [
   "alembic>=1.13.0",
   # Settings/configuration
   "pydantic-settings>=2.1.0",
+  # Authentication
+  "passlib[argon2]>=1.7.4",
+  "python-jose[cryptography]>=3.3.0",
 ]
 dev = [
   "pytest>=7.0.0",

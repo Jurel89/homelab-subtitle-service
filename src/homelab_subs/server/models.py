@@ -89,6 +89,197 @@ if SQLALCHEMY_AVAILABLE:
 
         pass
 
+    class User(Base):
+        """
+        User model for authentication.
+
+        Stores user credentials and metadata. Password is hashed
+        using Argon2 via passlib.
+
+        Attributes
+        ----------
+        id : UUID
+            Unique user identifier.
+        username : str
+            Unique username for login.
+        password_hash : str
+            Argon2 hashed password.
+        is_active : bool
+            Whether user can log in.
+        is_admin : bool
+            Whether user has admin privileges.
+        created_at : datetime
+            When the user was created.
+        last_login : datetime, optional
+            Last successful login time.
+        """
+
+        __tablename__ = "users"
+
+        id: Mapped[uuid.UUID] = mapped_column(
+            UUID(as_uuid=True),
+            primary_key=True,
+            default=uuid.uuid4,
+        )
+        username: Mapped[str] = mapped_column(
+            String(100),
+            unique=True,
+            nullable=False,
+            index=True,
+        )
+        password_hash: Mapped[str] = mapped_column(
+            String(255),
+            nullable=False,
+        )
+        is_active: Mapped[bool] = mapped_column(
+            default=True,
+            nullable=False,
+        )
+        is_admin: Mapped[bool] = mapped_column(
+            default=False,
+            nullable=False,
+        )
+        created_at: Mapped[datetime] = mapped_column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            nullable=False,
+        )
+        last_login: Mapped[Optional[datetime]] = mapped_column(
+            DateTime(timezone=True),
+            nullable=True,
+        )
+
+        def __repr__(self) -> str:
+            return f"User(id={self.id!r}, username={self.username!r})"
+
+        def to_dict(self) -> dict[str, Any]:
+            """Convert user to dictionary (excluding password)."""
+            return {
+                "id": str(self.id),
+                "username": self.username,
+                "is_active": self.is_active,
+                "is_admin": self.is_admin,
+                "created_at": self.created_at.isoformat() if self.created_at else None,
+                "last_login": self.last_login.isoformat() if self.last_login else None,
+            }
+
+    class GlobalSettings(Base):
+        """
+        Global application settings.
+
+        Singleton table (always id=1) storing application-wide configuration
+        that can be modified through the UI.
+
+        Attributes
+        ----------
+        id : int
+            Always 1 (singleton pattern).
+        media_folders : list[str]
+            Allowed directories for file browsing.
+        default_model : str
+            Default Whisper model for new jobs.
+        default_device : str
+            Default device (cpu/cuda) for processing.
+        default_compute_type : str
+            Default compute precision.
+        default_language : str
+            Default source language.
+        default_translation_backend : str
+            Default translation backend (nllb/helsinki).
+        worker_count : int
+            Number of workers to spawn.
+        log_retention_days : int
+            Days to keep logs before cleanup.
+        job_retention_days : int
+            Days to keep completed jobs before cleanup.
+        prefer_gpu : bool
+            Default preference for GPU processing.
+        updated_at : datetime
+            Last settings update time.
+        """
+
+        __tablename__ = "global_settings"
+
+        id: Mapped[int] = mapped_column(
+            Integer,
+            primary_key=True,
+            default=1,
+        )
+        media_folders: Mapped[Optional[list]] = mapped_column(
+            JSONB,
+            nullable=True,
+            default=list,
+        )
+        default_model: Mapped[str] = mapped_column(
+            String(50),
+            default="small",
+            nullable=False,
+        )
+        default_device: Mapped[str] = mapped_column(
+            String(20),
+            default="cpu",
+            nullable=False,
+        )
+        default_compute_type: Mapped[str] = mapped_column(
+            String(20),
+            default="int8",
+            nullable=False,
+        )
+        default_language: Mapped[str] = mapped_column(
+            String(10),
+            default="en",
+            nullable=False,
+        )
+        default_translation_backend: Mapped[str] = mapped_column(
+            String(50),
+            default="nllb",
+            nullable=False,
+        )
+        worker_count: Mapped[int] = mapped_column(
+            Integer,
+            default=1,
+            nullable=False,
+        )
+        log_retention_days: Mapped[int] = mapped_column(
+            Integer,
+            default=30,
+            nullable=False,
+        )
+        job_retention_days: Mapped[int] = mapped_column(
+            Integer,
+            default=90,
+            nullable=False,
+        )
+        prefer_gpu: Mapped[bool] = mapped_column(
+            default=False,
+            nullable=False,
+        )
+        updated_at: Mapped[datetime] = mapped_column(
+            DateTime(timezone=True),
+            server_default=func.now(),
+            onupdate=func.now(),
+            nullable=False,
+        )
+
+        def __repr__(self) -> str:
+            return f"GlobalSettings(id={self.id}, updated_at={self.updated_at})"
+
+        def to_dict(self) -> dict[str, Any]:
+            """Convert settings to dictionary."""
+            return {
+                "media_folders": self.media_folders or [],
+                "default_model": self.default_model,
+                "default_device": self.default_device,
+                "default_compute_type": self.default_compute_type,
+                "default_language": self.default_language,
+                "default_translation_backend": self.default_translation_backend,
+                "worker_count": self.worker_count,
+                "log_retention_days": self.log_retention_days,
+                "job_retention_days": self.job_retention_days,
+                "prefer_gpu": self.prefer_gpu,
+                "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            }
+
     class Job(Base):
         """
         Represents a subtitle processing job.
@@ -360,6 +551,16 @@ else:
     # Placeholder classes when SQLAlchemy is not available
     class Base:  # type: ignore[no-redef]
         """Placeholder base class."""
+
+        pass
+
+    class User:  # type: ignore[no-redef]
+        """Placeholder User class."""
+
+        pass
+
+    class GlobalSettings:  # type: ignore[no-redef]
+        """Placeholder GlobalSettings class."""
 
         pass
 
