@@ -22,7 +22,7 @@ class TestCLIServerCommands:
         # Parse server command
         args = parser.parse_args(["server"])
         assert args.command == "server"
-        assert args.host == "0.0.0.0"
+        assert args.host == "127.0.0.1"  # Default is localhost for security
         assert args.port == 8000
 
     def test_cli_has_worker_command(self):
