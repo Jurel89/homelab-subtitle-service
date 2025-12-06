@@ -16,8 +16,8 @@ import pytest
 
 # Check if SQLAlchemy is available
 try:
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy import create_engine  # noqa: F401
+    from sqlalchemy.orm import sessionmaker  # noqa: F401
 
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
@@ -26,7 +26,7 @@ except ImportError:
 # Check if models are available
 try:
     from homelab_subs.server.models import (
-        Base,
+        Base,  # noqa: F401
         Job,
         JobStatus,
         JobType,

@@ -9,7 +9,6 @@ and authentication flows.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -18,7 +17,7 @@ import pytest
 
 # Check if auth dependencies are available
 try:
-    from passlib.context import CryptContext
+    from passlib.context import CryptContext  # noqa: F401
     from jose import jwt
 
     AUTH_DEPS_AVAILABLE = True
@@ -103,7 +102,11 @@ class TestJWTTokenCreation:
 
     def test_create_access_token_contains_claims(self):
         """Access token should contain user claims."""
-        from homelab_subs.server.auth import create_access_token, JWT_SECRET_KEY, JWT_ALGORITHM
+        from homelab_subs.server.auth import (
+            create_access_token,
+            JWT_SECRET_KEY,
+            JWT_ALGORITHM,
+        )
 
         user_id = uuid4()
         username = "testuser"
@@ -118,7 +121,11 @@ class TestJWTTokenCreation:
 
     def test_create_access_token_custom_expiry(self):
         """Access token should accept custom expiry."""
-        from homelab_subs.server.auth import create_access_token, JWT_SECRET_KEY, JWT_ALGORITHM
+        from homelab_subs.server.auth import (
+            create_access_token,
+            JWT_SECRET_KEY,
+            JWT_ALGORITHM,
+        )
 
         user_id = uuid4()
         expires_delta = timedelta(hours=2)
@@ -143,7 +150,11 @@ class TestJWTTokenCreation:
 
     def test_create_refresh_token_contains_claims(self):
         """Refresh token should contain minimal claims."""
-        from homelab_subs.server.auth import create_refresh_token, JWT_SECRET_KEY, JWT_ALGORITHM
+        from homelab_subs.server.auth import (
+            create_refresh_token,
+            JWT_SECRET_KEY,
+            JWT_ALGORITHM,
+        )
 
         user_id = uuid4()
         token = create_refresh_token(user_id)

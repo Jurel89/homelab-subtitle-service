@@ -8,7 +8,6 @@ Uses mocked Redis/RQ for testing without real Redis.
 
 from __future__ import annotations
 
-import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,9 +15,9 @@ import pytest
 
 # Check if RQ is available
 try:
-    from redis import Redis
-    from rq import Queue
-    from rq.job import Job as RQJob
+    from redis import Redis  # noqa: F401
+    from rq import Queue  # noqa: F401
+    from rq.job import Job as RQJob  # noqa: F401
 
     RQ_AVAILABLE = True
 except ImportError:
@@ -44,9 +43,7 @@ class TestQueueClientInit:
     @patch("homelab_subs.server.queue.Redis")
     @patch("homelab_subs.server.queue.Queue")
     @patch("homelab_subs.server.queue.get_settings")
-    def test_queue_client_initialization(
-        self, mock_settings, mock_queue, mock_redis
-    ):
+    def test_queue_client_initialization(self, mock_settings, mock_queue, mock_redis):
         """QueueClient should initialize with settings."""
         from homelab_subs.server.queue import QueueClient
 
@@ -82,7 +79,7 @@ def mock_queue_client(mock_settings):
     from homelab_subs.server.queue import QueueClient
 
     with patch("homelab_subs.server.queue.Redis") as mock_redis:
-        with patch("homelab_subs.server.queue.Queue") as mock_queue:
+        with patch("homelab_subs.server.queue.Queue"):
             with patch(
                 "homelab_subs.server.queue.get_settings", return_value=mock_settings
             ):
@@ -106,8 +103,8 @@ class TestQueueClientOperations:
 
     def test_get_queue_creates_on_demand(self, mock_queue_client):
         """get_queue should create unknown queues on demand."""
-        with patch("homelab_subs.server.queue.Queue") as mock_queue:
-            queue = mock_queue_client.get_queue("custom")
+        with patch("homelab_subs.server.queue.Queue"):
+            _ = mock_queue_client.get_queue("custom")
             # Should have created a new queue
             assert "custom" in mock_queue_client._queues
 

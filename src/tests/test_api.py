@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -358,7 +358,14 @@ class TestJobStatisticsSchema:
         )
 
         assert response.total_jobs == 100
-        assert response.pending + response.running + response.completed + response.failed + response.cancelled == 100
+        assert (
+            response.pending
+            + response.running
+            + response.completed
+            + response.failed
+            + response.cancelled
+            == 100
+        )
 
 
 class TestQueueStatusSchema:

@@ -8,18 +8,16 @@ Uses mocked dependencies for testing without actual job execution.
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 
 # Check if worker dependencies are available
 try:
-    from redis import Redis
-    from rq import Worker
-    from sqlalchemy import create_engine
+    from redis import Redis  # noqa: F401
+    from rq import Worker  # noqa: F401
+    from sqlalchemy import create_engine  # noqa: F401
 
     WORKER_DEPS_AVAILABLE = True
 except ImportError:
@@ -73,7 +71,7 @@ class TestJobContext:
     ):
         """JobContext __enter__ should load job from database."""
         from homelab_subs.server.worker import JobContext
-        from homelab_subs.server.models import Job, JobStatus, JobType
+        from homelab_subs.server.models import JobStatus
 
         settings = MagicMock()
         settings.sync_database_url = "postgresql://localhost/test"
@@ -275,8 +273,6 @@ class TestWorkerHelpers:
     def test_temp_file_creation(self):
         """create_temp_file should create temp file."""
         from homelab_subs.server.worker import JobContext
-        import tempfile
-        from pathlib import Path
 
         with patch("homelab_subs.server.worker.get_settings") as mock_settings:
             with patch("homelab_subs.server.worker.create_engine"):
