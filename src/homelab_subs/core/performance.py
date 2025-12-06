@@ -122,8 +122,8 @@ class PerformanceMonitor:
         if self._gpu_initialized:
             try:
                 pynvml.nvmlShutdown()
-            except Exception:
-                pass
+            except Exception:  # nosec B110 - Intentionally silent cleanup in destructor
+                pass  # Cleanup errors are non-critical during object destruction
 
     def get_metrics(self) -> SystemMetrics:
         """
@@ -197,9 +197,9 @@ class PerformanceMonitor:
                     except Exception:
                         gpu_temperature = None
 
-            except Exception:
+            except Exception:  # nosec B110 - GPU metrics are optional, failures expected
                 # GPU metrics unavailable, leave as None
-                pass
+                pass  # Non-critical: GPU monitoring may not be available
 
         return SystemMetrics(
             timestamp=time.time(),

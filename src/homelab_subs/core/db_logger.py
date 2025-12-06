@@ -379,7 +379,8 @@ class DatabaseLogger:
             return
 
         values.append(job_id)
-        sql = f"UPDATE jobs SET {', '.join(updates)} WHERE job_id = ?"
+        # nosec B608 - Column names are from a fixed allowlist, not user input
+        sql = f"UPDATE jobs SET {', '.join(updates)} WHERE job_id = ?"  # nosec B608
 
         with self._get_connection() as conn:
             cursor = conn.cursor()

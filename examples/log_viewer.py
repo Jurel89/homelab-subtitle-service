@@ -8,7 +8,7 @@ JSON logs in a web interface. It uses Flask for simplicity.
 Usage:
     pip install flask
     python log_viewer.py --log-file /path/to/logs.json
-    
+
 Then open http://localhost:5000 in your browser.
 """
 
@@ -34,14 +34,14 @@ LOG_FILE_PATH: Path = Path("subsvc.log")
 def parse_log_file(log_path: Path, limit: int = 1000) -> List[Dict[str, Any]]:
     """
     Parse the JSON log file and return recent entries.
-    
+
     Parameters
     ----------
     log_path : Path
         Path to the log file
     limit : int
         Maximum number of entries to return (most recent)
-    
+
     Returns
     -------
     List[Dict[str, Any]]
@@ -49,7 +49,7 @@ def parse_log_file(log_path: Path, limit: int = 1000) -> List[Dict[str, Any]]:
     """
     if not log_path.exists():
         return []
-    
+
     entries = []
     with open(log_path) as f:
         for line in f:
@@ -57,7 +57,7 @@ def parse_log_file(log_path: Path, limit: int = 1000) -> List[Dict[str, Any]]:
                 entries.append(json.loads(line.strip()))
             except json.JSONDecodeError:
                 continue
-    
+
     # Return most recent entries
     return entries[-limit:]
 
@@ -65,24 +65,24 @@ def parse_log_file(log_path: Path, limit: int = 1000) -> List[Dict[str, Any]]:
 def get_jobs_summary(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Extract summary information about jobs from log entries.
-    
+
     Parameters
     ----------
     entries : List[Dict[str, Any]]
         Log entries
-    
+
     Returns
     -------
     Dict[str, Any]
         Summary information by job_id
     """
     jobs = {}
-    
+
     for entry in entries:
         job_id = entry.get("job_id")
         if not job_id:
             continue
-        
+
         if job_id not in jobs:
             jobs[job_id] = {
                 "job_id": job_id,
@@ -90,29 +90,29 @@ def get_jobs_summary(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "stages": {},
                 "status": "running",
                 "started_at": entry.get("timestamp"),
-                "errors": []
+                "errors": [],
             }
-        
+
         # Track stage progress
         stage = entry.get("stage")
         if stage:
             if stage not in jobs[job_id]["stages"]:
                 jobs[job_id]["stages"][stage] = {"status": "started"}
-            
+
             if "duration" in entry:
                 jobs[job_id]["stages"][stage]["duration"] = entry["duration"]
                 jobs[job_id]["stages"][stage]["status"] = "completed"
-        
+
         # Track errors
         if entry.get("level") == "ERROR":
             jobs[job_id]["errors"].append(entry.get("message", "Unknown error"))
             jobs[job_id]["status"] = "failed"
-        
+
         # Check if completed
         if "Successfully generated subtitles" in entry.get("message", ""):
             jobs[job_id]["status"] = "completed"
             jobs[job_id]["completed_at"] = entry.get("timestamp")
-    
+
     return jobs
 
 
@@ -393,7 +393,7 @@ def index():
     """Main dashboard page."""
     entries = parse_log_file(LOG_FILE_PATH)
     jobs = get_jobs_summary(entries)
-    
+
     # Calculate stats
     stats = {
         "total": len(jobs),
@@ -401,16 +401,13 @@ def index():
         "running": sum(1 for j in jobs.values() if j["status"] == "running"),
         "failed": sum(1 for j in jobs.values() if j["status"] == "failed"),
     }
-    
+
     # Using render_template_string is safe here because DASHBOARD_TEMPLATE is a constant
     # and not derived from user input. Semgrep flags this as a potential SSTI vulnerability,
     # but it's a false positive in this context.
     # nosemgrep: python.flask.security.audit.render-template-string.render-template-string
     return render_template_string(
-        DASHBOARD_TEMPLATE,
-        jobs=list(jobs.values()),
-        logs=entries,
-        stats=stats
+        DASHBOARD_TEMPLATE, jobs=list(jobs.values()), logs=entries, stats=stats
     )
 
 
@@ -450,19 +447,19 @@ def main():
         default=5000,
         help="Port to bind to (default: 5000)",
     )
-    
+
     args = parser.parse_args()
-    
+
     global LOG_FILE_PATH
     LOG_FILE_PATH = args.log_file
-    
+
     print("Starting log viewer...")
     print(f"Log file: {LOG_FILE_PATH}")
     print(f"Dashboard: http://{args.host}:{args.port}")
     print(f"API Logs: http://{args.host}:{args.port}/api/logs")
     print(f"API Jobs: http://{args.host}:{args.port}/api/jobs")
     print("\nPress Ctrl+C to stop")
-    
+
     app.run(host=args.host, port=args.port, debug=True)
 
 
