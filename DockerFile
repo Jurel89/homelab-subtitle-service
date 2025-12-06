@@ -1,0 +1,28 @@
+# Dockerfile
+FROM python:3.11-slim
+
+# Install ffmpeg and clean up apt cache
+# Note: Pinning specific ffmpeg version is not reliable due to Debian repository changes
+# Using latest available version from repository for security updates
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set workdir
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+# Install the package with pinned pip version and no cache
+# DL3013: Pin pip version for reproducibility
+# DL3042: Use --no-cache-dir to reduce image size
+RUN pip install --no-cache-dir --upgrade pip==25.0.1 \
+    && pip install --no-cache-dir .
+
+# Default entrypoint is the CLI
+ENTRYPOINT ["subsvc"]
+# Default command: show help if no args
+CMD ["--help"]
+

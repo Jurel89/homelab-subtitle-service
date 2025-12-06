@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling>=1.21.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "homelab-subtitle-service"
+version = "0.1.0"
+description = "CLI and service for generating subtitles from video files using ffmpeg and Whisper."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+authors = [
+  { name = "Jose Ibañez Ortiz", email = "118691212+Jurel89@users.noreply.github.com" }
+]
+
+keywords = ["subtitles", "ffmpeg", "whisper", "media", "homelab"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+dependencies = [
+  # Faster, nicer Whisper implementation
+  "faster-whisper>=1.0.0",
+  # For batch config files (YAML)
+  "PyYAML>=6.0.0",
+  # For progress bars
+  "tqdm>=4.65.0",
+  # For system resource monitoring
+  "psutil>=5.9.0",
+  # For GPU monitoring (optional, will be checked at runtime)
+  "nvidia-ml-py>=12.535.0;platform_system=='Linux'",
+]
+
+[project.optional-dependencies]
+translation = [
+  # For subtitle translation (Helsinki-NLP MarianMT and NLLB-200)
+  "transformers>=4.35.0",
+  "sentencepiece>=0.1.99",
+  "torch>=2.0.0",
+  "sacremoses>=0.1.0",
+]
+server = [
+  # Web API framework
+  "fastapi>=0.109.0",
+  "uvicorn[standard]>=0.27.0",
+  # Job queue (Redis-based)
+  "rq>=1.16.0",
+  "redis>=5.0.0",
+  # PostgreSQL database
+  "sqlalchemy>=2.0.0",
+  "psycopg[binary]>=3.1.0",
+  "alembic>=1.13.0",
+  # Settings/configuration
+  "pydantic-settings>=2.1.0",
+  # Authentication
+  "passlib[argon2]>=1.7.4",
+  "python-jose[cryptography]>=3.3.0",
+]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "pytest-asyncio>=0.23.0",
+  "httpx>=0.26.0",
+  "ruff>=0.5.0",
+  "mypy>=1.8.0",
+]
+all = [
+  "homelab-subtitle-service[translation,server,dev]",
+]
+
+[project.scripts]
+# This is the CLI entrypoint: `subsvc` will call homelab_subs.cli:main
+subsvc = "homelab_subs.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/homelab_subs"]

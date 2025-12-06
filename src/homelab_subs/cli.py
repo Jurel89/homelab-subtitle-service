@@ -1,0 +1,1607 @@
+# src/homelab_subs/cli.py
+
+from __future__ import annotations
+
+import argparse
+import uuid
+from pathlib import Path
+from typing import Any, Optional
+
+from tqdm import tqdm
+import yaml
+
+from .core.audio import FFmpegError
+from .core.transcription import TranscriptionTask
+from .logging_config import setup_logging, get_logger, log_file_info
+from .services.job_service import JobService
+
+logger = get_logger(__name__)
+
+__version__ = "0.3.0"
+
+# ASCII Art Logo
+LOGO = r"""
+   _____ __  ______  _____ _    ________
+  / ___// / / / __ )/ ___/| |  / / ____/
+  \__ \/ / / / __  |\__ \ | | / / /     
+ ___/ / /_/ / /_/ /___/ / | |/ / /___   
+/____/\____/_____//____/  |___/\____/   
+                                        
+  🎬 Homelab Subtitle Service
+"""
+
+BANNER = f"""{LOGO}
+  Version: {__version__}
+  Generate subtitles with Whisper AI
+  ─────────────────────────────────────
+"""
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="subsvc",
+        description=BANNER,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}\n{LOGO}",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # ---- generate ----
+    gen = subparsers.add_parser(
+        "generate",
+        help="Generate subtitles for a single video file.",
+    )
+    gen.add_argument(
+        "video",
+        type=Path,
+        help="Path to the input video file.",
+    )
+    gen.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Optional output .srt path. "
+        "Defaults to <video_dir>/<video_name>.<lang>.srt",
+    )
+    gen.add_argument(
+        "--lang",
+        default="en",
+        help="Language code for transcription (default: en). Use None/empty for auto-detect.",
+    )
+    gen.add_argument(
+        "--model",
+        default="small",
+        help='Whisper model name (e.g. "tiny", "base", "small", "medium", "large-v2"). '
+        "Default: small",
+    )
+    gen.add_argument(
+        "--device",
+        default="cpu",
+        help='Device to use (e.g. "cpu" or "cuda"). Default: cpu',
+    )
+    gen.add_argument(
+        "--compute-type",
+        dest="compute_type",
+        default="int8",
+        help='Compute type for faster-whisper (e.g. "int8", "int8_float16", "float16"). '
+        "Default: int8",
+    )
+    gen.add_argument(
+        "--task",
+        choices=["transcribe", "translate"],
+        default="transcribe",
+        help='Task: "transcribe" keeps language, "translate" outputs English. Default: transcribe',
+    )
+    gen.add_argument(
+        "--beam-size",
+        type=int,
+        default=5,
+        help="Beam size for decoding (higher = better, slower). Default: 5",
+    )
+    gen.add_argument(
+        "--no-vad",
+        action="store_true",
+        help="Disable VAD filtering (voice activity detection). Enabled by default.",
+    )
+    gen.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    gen.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+    gen.add_argument(
+        "--no-monitoring",
+        dest="enable_monitoring",
+        action="store_false",
+        help="Disable performance monitoring (CPU, memory, GPU tracking)",
+    )
+    gen.add_argument(
+        "--no-db-logging",
+        dest="enable_db_logging",
+        action="store_false",
+        help="Disable database logging (job history and metrics storage)",
+    )
+    gen.add_argument(
+        "--db-path",
+        dest="db_path",
+        type=Path,
+        help="Custom database path (default: ~/.homelab-subs/logs.db)",
+    )
+    gen.add_argument(
+        "--target-lang",
+        dest="target_lang",
+        default=None,
+        help="Target language for automatic translation after transcription. "
+        "If set and different from --lang, subtitles will be translated. "
+        "(e.g., 'es', 'fr', 'de')",
+    )
+    gen.add_argument(
+        "--translation-backend",
+        dest="translation_backend",
+        choices=["helsinki", "nllb"],
+        default="nllb",
+        help='Translation backend: "helsinki" (MarianMT, fast) or "nllb" (NLLB-200, more languages). '
+        "Default: nllb",
+    )
+    gen.add_argument(
+        "--translation-model",
+        dest="translation_model",
+        default=None,
+        help="Specific translation model name (optional). For NLLB: "
+        "'facebook/nllb-200-distilled-600M' (default) or 'facebook/nllb-200-3.3B' (best quality).",
+    )
+
+    # ---- batch ----
+    batch = subparsers.add_parser(
+        "batch",
+        help="Run multiple subtitle generation jobs from a YAML config file.",
+    )
+    batch.add_argument(
+        "config",
+        type=Path,
+        help="Path to YAML config file describing jobs.",
+    )
+    batch.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    batch.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
+    # ---- history ----
+    history = subparsers.add_parser(
+        "history",
+        help="View job history and statistics from database logs.",
+    )
+    history.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Number of recent jobs to display (default: 20)",
+    )
+    history.add_argument(
+        "--status",
+        choices=["pending", "running", "completed", "failed"],
+        help="Filter jobs by status",
+    )
+    history.add_argument(
+        "--db-path",
+        dest="db_path",
+        type=Path,
+        help="Custom database path (default: ~/.homelab-subs/logs.db)",
+    )
+    history.add_argument(
+        "--stats",
+        action="store_true",
+        help="Show overall statistics instead of job list",
+    )
+    history.add_argument(
+        "--job-id",
+        dest="job_id",
+        help="Show detailed metrics for a specific job ID",
+    )
+
+    # ---- translate ----
+    translate = subparsers.add_parser(
+        "translate",
+        help="Translate an existing SRT subtitle file to another language.",
+    )
+    translate.add_argument(
+        "input",
+        type=Path,
+        help="Path to the input SRT file to translate.",
+    )
+    translate.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Optional output SRT path. "
+        "Defaults to <input_dir>/<input_name>.<target_lang>.srt",
+    )
+    translate.add_argument(
+        "--source-lang",
+        dest="source_lang",
+        default="en",
+        help="Source language code (ISO 639-1, e.g., 'en'). Default: en",
+    )
+    translate.add_argument(
+        "--target-lang",
+        dest="target_lang",
+        required=True,
+        help="Target language code (ISO 639-1, e.g., 'es', 'fr', 'de').",
+    )
+    translate.add_argument(
+        "--backend",
+        choices=["helsinki", "nllb"],
+        default="nllb",
+        help='Translation backend: "helsinki" (MarianMT) or "nllb" (NLLB-200). Default: nllb',
+    )
+    translate.add_argument(
+        "--model",
+        default=None,
+        help="Specific model name (optional). For NLLB: 'facebook/nllb-200-distilled-600M' "
+        "(default) or 'facebook/nllb-200-3.3B' (best quality).",
+    )
+    translate.add_argument(
+        "--device",
+        default="cpu",
+        help='Device to use (e.g. "cpu" or "cuda"). Default: cpu',
+    )
+    translate.add_argument(
+        "--batch-size",
+        dest="batch_size",
+        type=int,
+        default=8,
+        help="Batch size for translation (default: 8).",
+    )
+    translate.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    translate.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
+    # ---- languages ----
+    languages = subparsers.add_parser(
+        "languages",
+        help="List supported languages for translation.",
+    )
+    languages.add_argument(
+        "--backend",
+        choices=["helsinki", "nllb"],
+        default="nllb",
+        help='Translation backend to query: "helsinki" or "nllb". Default: nllb',
+    )
+
+    # ---- sync ----
+    sync = subparsers.add_parser(
+        "sync",
+        help="Synchronize existing subtitle timing with video audio.",
+    )
+    sync.add_argument(
+        "video",
+        type=Path,
+        help="Path to the video file.",
+    )
+    sync.add_argument(
+        "srt",
+        type=Path,
+        help="Path to the existing SRT subtitle file to synchronize.",
+    )
+    sync.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Optional output SRT path. Defaults to <input>.synced.srt",
+    )
+    sync.add_argument(
+        "--lang",
+        default=None,
+        help="Language code for transcription (default: auto-detect).",
+    )
+    sync.add_argument(
+        "--model",
+        default="small",
+        help="Whisper model name for timing reference (default: small). "
+        'Use "tiny" for speed or "medium"/"large-v2" for accuracy.',
+    )
+    sync.add_argument(
+        "--device",
+        default="cpu",
+        help='Device to use (e.g. "cpu" or "cuda"). Default: cpu',
+    )
+    sync.add_argument(
+        "--compute-type",
+        dest="compute_type",
+        default="int8",
+        help="Compute type for faster-whisper. Default: int8",
+    )
+    sync.add_argument(
+        "--min-similarity",
+        dest="min_similarity",
+        type=float,
+        default=0.6,
+        help="Minimum text similarity (0-1) to match subtitles. Default: 0.6",
+    )
+    sync.add_argument(
+        "--no-interpolate",
+        dest="interpolate",
+        action="store_false",
+        help="Don't interpolate timing for unmatched subtitles. Keep original timing instead.",
+    )
+    sync.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    sync.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
+    # ---- compare ----
+    compare = subparsers.add_parser(
+        "compare",
+        help="Compare reference (human) subtitles with hypothesis (machine) subtitles.",
+    )
+    compare.add_argument(
+        "reference",
+        type=Path,
+        help="Path to reference SRT file (ground truth / human-generated).",
+    )
+    compare.add_argument(
+        "hypothesis",
+        type=Path,
+        help="Path to hypothesis SRT file (machine-generated to evaluate).",
+    )
+    compare.add_argument(
+        "--timing-threshold",
+        dest="timing_threshold",
+        type=float,
+        default=500.0,
+        help="Timing threshold in ms for accuracy measurement (default: 500).",
+    )
+    compare.add_argument(
+        "--detailed",
+        action="store_true",
+        help="Show detailed per-segment comparison.",
+    )
+    compare.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Output results in JSON format.",
+    )
+    compare.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        help="Save report to file instead of printing to console.",
+    )
+    compare.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    compare.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
+    # ---- benchmark ----
+    benchmark = subparsers.add_parser(
+        "benchmark",
+        help="Generate subtitles and compare with reference to benchmark model/settings.",
+    )
+    benchmark.add_argument(
+        "video",
+        type=Path,
+        help="Path to the video file.",
+    )
+    benchmark.add_argument(
+        "reference",
+        type=Path,
+        help="Path to reference SRT file (ground truth / human-generated).",
+    )
+    benchmark.add_argument(
+        "--lang",
+        default="en",
+        help="Language code for transcription (default: en).",
+    )
+    benchmark.add_argument(
+        "--models",
+        nargs="+",
+        default=["small"],
+        help='Whisper model(s) to benchmark (e.g., "tiny small medium"). Default: small',
+    )
+    benchmark.add_argument(
+        "--compute-types",
+        dest="compute_types",
+        nargs="+",
+        default=["int8"],
+        help='Compute type(s) to benchmark (e.g., "int8 float16"). Default: int8',
+    )
+    benchmark.add_argument(
+        "--device",
+        default="cpu",
+        help='Device to use (e.g. "cpu" or "cuda"). Default: cpu',
+    )
+    benchmark.add_argument(
+        "--task",
+        choices=["transcribe", "translate"],
+        default="transcribe",
+        help='Task: "transcribe" or "translate". Default: transcribe',
+    )
+    benchmark.add_argument(
+        "--timing-threshold",
+        dest="timing_threshold",
+        type=float,
+        default=500.0,
+        help="Timing threshold in ms for accuracy measurement (default: 500).",
+    )
+    benchmark.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        type=Path,
+        help="Directory to save generated subtitles and reports. Default: current directory.",
+    )
+    benchmark.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Output benchmark summary in JSON format.",
+    )
+    benchmark.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+    benchmark.add_argument(
+        "--log-file",
+        dest="log_file",
+        type=Path,
+        help="Optional log file path for JSON-formatted logs",
+    )
+
+    # ---- server ----
+    server = subparsers.add_parser(
+        "server",
+        help="Run the FastAPI server for job queue management.",
+    )
+    server.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind the server (default: 0.0.0.0).",
+    )
+    server.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind the server (default: 8000).",
+    )
+    server.add_argument(
+        "--reload",
+        action="store_true",
+        help="Enable auto-reload for development.",
+    )
+    server.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of uvicorn worker processes (default: 1).",
+    )
+    server.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+
+    # ---- worker ----
+    worker = subparsers.add_parser(
+        "worker",
+        help="Run an RQ worker to process subtitle jobs.",
+    )
+    worker.add_argument(
+        "--queues",
+        nargs="+",
+        default=["high", "default", "low"],
+        help='Queue names to listen on (default: "high default low").',
+    )
+    worker.add_argument(
+        "--burst",
+        action="store_true",
+        help="Run in burst mode (exit when queues are empty).",
+    )
+    worker.add_argument(
+        "--name",
+        help="Worker name for identification.",
+    )
+    worker.add_argument(
+        "--log-level",
+        dest="log_level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging level (default: INFO)",
+    )
+
+    return parser
+
+
+def _default_output_path(video_path: Path, lang: str) -> Path:
+    """
+    Derive a default output SRT path based on video name and language.
+    e.g. /path/Movie.mkv -> /path/Movie.en.srt
+    """
+    video_path = Path(video_path)
+    suffix_lang = (lang or "auto").lower()
+    return video_path.with_suffix(f".{suffix_lang}.srt")
+
+
+def _run_generate(
+    video_path: Path,
+    output_path: Optional[Path],
+    lang: Optional[str],
+    model_name: str,
+    device: str,
+    compute_type: str,
+    task: TranscriptionTask,
+    beam_size: int,
+    vad_filter: bool,
+    job_id: Optional[str] = None,
+    enable_monitoring: bool = True,
+    enable_db_logging: bool = True,
+    db_path: Optional[Path] = None,
+    target_lang: Optional[str] = None,
+    translation_backend: str = "nllb",
+    translation_model: Optional[str] = None,
+) -> Path:
+    """
+    End-to-end generation driven by the JobService orchestrator.
+
+    If target_lang is provided and differs from lang, automatic translation
+    will be performed after transcription.
+    """
+    if job_id is None:
+        job_id = str(uuid.uuid4())[:8]
+
+    context = {
+        "job_id": job_id,
+        "video_file": str(video_path.name),
+    }
+
+    logger.info(f"Starting subtitle generation for {video_path.name}", extra=context)
+    log_file_info(logger, video_path, context)
+
+    if output_path is None:
+        output_path = _default_output_path(video_path, lang or "auto")
+
+    service = JobService(
+        enable_monitoring=enable_monitoring,
+        enable_db_logging=enable_db_logging,
+        db_path=db_path,
+    )
+
+    if enable_monitoring and not service.monitoring_available:
+        logger.warning(
+            "Monitoring requested but dependencies not installed. "
+            "Install with: pip install psutil nvidia-ml-py"
+        )
+
+    if enable_db_logging and not service.db_logging_available:
+        logger.warning(
+            "Database logging requested but dependencies unavailable. Logs will not be recorded."
+        )
+
+    language_param: Optional[str] = lang if lang else None
+
+    # Determine progress bar description based on whether translation will occur
+    will_translate = target_lang and target_lang != (lang or "en")
+    progress_desc = (
+        "Transcribing" if not will_translate else "Transcribing + Translating"
+    )
+
+    pbar = tqdm(total=100, unit="%", desc=progress_desc, leave=True)
+
+    def progress_cb(pct: float, count: int) -> None:
+        pbar.n = int(pct)
+        pbar.refresh()
+        logger.info(
+            f"CLI progress: {pct:.1f}%",
+            extra={**context, "progress": pct, "segment_count": count},
+        )
+
+    try:
+        result_path = service.generate_subtitles(
+            video_path=video_path,
+            output_path=output_path,
+            lang=language_param,
+            model_name=model_name,
+            device=device,
+            compute_type=compute_type,
+            task=task,
+            beam_size=beam_size,
+            vad_filter=vad_filter,
+            job_id=job_id,
+            progress_callback=progress_cb,
+            target_lang=target_lang,
+            translation_backend=translation_backend,
+            translation_model=translation_model,
+        )
+        pbar.n = 100
+        pbar.refresh()
+
+        if will_translate:
+            logger.info(
+                f"Successfully generated and translated subtitles: {result_path.name}",
+                extra={**context, "output_file": str(result_path)},
+            )
+        else:
+            logger.info(
+                f"Successfully generated subtitles: {result_path.name}",
+                extra={**context, "output_file": str(result_path)},
+            )
+        return result_path
+    finally:
+        pbar.close()
+
+
+def _run_batch(config_path: Path) -> None:
+    """
+    Run multiple jobs defined in a YAML config.
+
+    Example YAML:
+
+    jobs:
+      - file: /media/movies/Movie.2023.mkv
+        lang: en
+        model: small
+        output: /subs/Movie.2023.en.srt
+      - file: /media/shows/Show.S01E01.mkv
+        lang: en
+    """
+    config_path = Path(config_path)
+
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    logger.info(f"Loading batch configuration from {config_path}")
+
+    data: dict[str, Any] = yaml.safe_load(config_path.read_text())
+    jobs = data.get("jobs") or []
+
+    if not isinstance(jobs, list):
+        raise ValueError("Config file must contain a 'jobs' list.")
+
+    logger.info(f"Found {len(jobs)} job(s) to process")
+
+    successful = 0
+    failed = 0
+
+    for idx, job in enumerate(jobs, start=1):
+        job_id = f"batch_{idx}"
+
+        if not isinstance(job, dict):
+            logger.error(f"Job {idx} is not a valid dictionary, skipping")
+            failed += 1
+            continue
+
+        file_path = job.get("file")
+        if not file_path:
+            logger.error(f"Job {idx} is missing required 'file' field, skipping")
+            failed += 1
+            continue
+
+        video = Path(file_path)
+        lang = job.get("lang", "en")
+        model = job.get("model", "small")
+        device = job.get("device", "cpu")
+        compute_type = job.get("compute_type", "int8")
+        task = job.get("task", "transcribe")
+        beam_size = int(job.get("beam_size", 5))
+        vad_filter = bool(job.get("vad_filter", True))
+
+        output = job.get("output")
+        output_path = Path(output) if output else None
+
+        logger.info(
+            f"Processing job {idx}/{len(jobs)}: {video.name}", extra={"job_id": job_id}
+        )
+
+        try:
+            srt_path = _run_generate(
+                video_path=video,
+                output_path=output_path,
+                lang=lang,
+                model_name=model,
+                device=device,
+                compute_type=compute_type,
+                task=task,  # type: ignore[arg-type]
+                beam_size=beam_size,
+                vad_filter=vad_filter,
+                job_id=job_id,
+            )
+            logger.info(
+                f"Job {idx} completed successfully: {srt_path}",
+                extra={"job_id": job_id},
+            )
+            successful += 1
+        except Exception as exc:
+            logger.error(
+                f"Job {idx} failed: {exc}", extra={"job_id": job_id}, exc_info=True
+            )
+            failed += 1
+
+    logger.info(f"Batch processing complete: {successful} successful, {failed} failed")
+
+
+def _run_history(
+    limit: int = 20,
+    status: Optional[str] = None,
+    db_path: Optional[Path] = None,
+    show_stats: bool = False,
+    job_id: Optional[str] = None,
+) -> None:
+    """
+    Display job history and statistics from database logs.
+    """
+    service = JobService(
+        enable_monitoring=False,
+        enable_db_logging=True,
+        db_path=db_path,
+    )
+
+    try:
+        if job_id:
+            details = service.get_job_details(job_id)
+            if details is None:
+                logger.error(f"Job not found: {job_id}")
+                return
+
+            job = details["job"]
+            metrics = details["metrics"]
+
+            print(f"\n{'=' * 80}")
+            print(f"Job Details: {job_id}")
+            print(f"{'=' * 80}")
+            print(f"Video:      {job.video_path}")
+            print(f"Output:     {job.output_path}")
+            print(f"Status:     {job.status}")
+            print(f"Language:   {job.language}")
+            print(f"Model:      {job.model}")
+            print(f"Task:       {job.task}")
+            print(f"Started:    {job.started_at}")
+            print(f"Completed:  {job.completed_at or 'N/A'}")
+            print(
+                f"Duration:   {job.duration_seconds:.2f}s"
+                if job.duration_seconds
+                else "Duration:   N/A"
+            )
+
+            if job.error_message:
+                print(f"Error:      {job.error_message}")
+
+            print(f"\n{'=' * 80}")
+            print("Performance Summary")
+            print(f"{'=' * 80}")
+            print(
+                f"CPU Avg:    {job.cpu_avg:.1f}%" if job.cpu_avg else "CPU Avg:    N/A"
+            )
+            print(
+                f"CPU Max:    {job.cpu_max:.1f}%" if job.cpu_max else "CPU Max:    N/A"
+            )
+            print(
+                f"Memory Avg: {job.memory_avg_mb:.1f} MB"
+                if job.memory_avg_mb
+                else "Memory Avg: N/A"
+            )
+            print(
+                f"Memory Max: {job.memory_max_mb:.1f} MB"
+                if job.memory_max_mb
+                else "Memory Max: N/A"
+            )
+            print(
+                f"GPU Avg:    {job.gpu_avg:.1f}%" if job.gpu_avg else "GPU Avg:    N/A"
+            )
+            print(
+                f"GPU Max:    {job.gpu_max:.1f}%" if job.gpu_max else "GPU Max:    N/A"
+            )
+
+            if metrics:
+                print(f"\n{'=' * 80}")
+                print(f"Metrics Timeline ({len(metrics)} samples)")
+                print(f"{'=' * 80}")
+                print(
+                    f"{'Time':>8} | {'CPU%':>6} | {'Memory%':>8} | {'GPU%':>6} | {'GPU Mem MB':>10}"
+                )
+                print(f"{'-' * 8}-+-{'-' * 6}-+-{'-' * 8}-+-{'-' * 6}-+-{'-' * 10}")
+
+                for i, m in enumerate(metrics):
+                    if i >= 10:
+                        print(f"... ({len(metrics) - 10} more samples)")
+                        break
+                    time_str = m.timestamp.strftime("%H:%M:%S")
+                    gpu_str = (
+                        f"{m.gpu_utilization:>6.1f}" if m.gpu_utilization else "   N/A"
+                    )
+                    gpu_mem_str = (
+                        f"{m.gpu_memory_used_mb:>10.1f}"
+                        if m.gpu_memory_used_mb
+                        else "       N/A"
+                    )
+                    print(
+                        f"{time_str} | {m.cpu_percent:>6.1f} | {m.memory_percent:>8.1f} | {gpu_str} | {gpu_mem_str}"
+                    )
+
+            print()
+            return
+
+        if show_stats:
+            stats = service.get_statistics()
+
+            print(f"\n{'=' * 80}")
+            print("Overall Statistics")
+            print(f"{'=' * 80}")
+            print(f"Total Jobs: {stats['total_jobs']}")
+            print("\nStatus Breakdown:")
+            for status_name, count in stats["status_counts"].items():
+                print(f"  {status_name:12} : {count:>5}")
+
+            if stats["avg_duration_seconds"]:
+                print("\nDuration:")
+                print(f"  Average: {stats['avg_duration_seconds']:.2f}s")
+                print(f"  Min:     {stats['min_duration_seconds']:.2f}s")
+                print(f"  Max:     {stats['max_duration_seconds']:.2f}s")
+
+            if stats["avg_cpu_percent"]:
+                print("\nPerformance Averages:")
+                print(f"  CPU:    {stats['avg_cpu_percent']:.1f}%")
+                print(f"  Memory: {stats['avg_memory_mb']:.1f} MB")
+                if stats["avg_gpu_percent"]:
+                    print(f"  GPU:    {stats['avg_gpu_percent']:.1f}%")
+
+            print()
+            return
+
+        jobs = service.get_recent_jobs(limit=limit, status=status)
+
+        if not jobs:
+            print(f"\nNo jobs found{' with status: ' + status if status else ''}.")
+            return
+
+        print(f"\n{'=' * 120}")
+        print(f"Recent Jobs ({len(jobs)}{' with status: ' + status if status else ''})")
+        print(f"{'=' * 120}")
+        print(
+            f"{'Job ID':>10} | {'Status':>10} | {'Video':45} | {'Duration':>10} | {'CPU Avg':>8} | {'Mem Avg':>9}"
+        )
+        print(
+            f"{'-' * 10}-+-{'-' * 10}-+-{'-' * 45}-+-{'-' * 10}-+-{'-' * 8}-+-{'-' * 9}"
+        )
+
+        for job in jobs:
+            video_name = Path(job.video_path).name
+            if len(video_name) > 45:
+                video_name = video_name[:42] + "..."
+
+            duration_str = (
+                f"{job.duration_seconds:.2f}s" if job.duration_seconds else "N/A"
+            )
+            cpu_str = f"{job.cpu_avg:.1f}%" if job.cpu_avg else "N/A"
+            mem_str = f"{job.memory_avg_mb:.0f} MB" if job.memory_avg_mb else "N/A"
+
+            print(
+                f"{job.job_id:>10} | {job.status:>10} | {video_name:45} | {duration_str:>10} | {cpu_str:>8} | {mem_str:>9}"
+            )
+
+        print(
+            "\nUse 'subsvc history --job-id <id>' to see detailed metrics for a specific job."
+        )
+        print()
+
+    except RuntimeError as exc:
+        logger.error(str(exc))
+
+
+def _run_translate(
+    input_path: Path,
+    output_path: Optional[Path],
+    source_lang: str,
+    target_lang: str,
+    backend: str,
+    model_name: Optional[str],
+    device: str,
+    batch_size: int,
+) -> Path:
+    """
+    Translate an SRT subtitle file to another language.
+    """
+    try:
+        from .core.translation import Translator, TranslatorConfig
+    except ImportError as e:
+        raise ImportError(
+            "Translation requires additional dependencies. "
+            "Install with: pip install homelab-subtitle-service[translation]"
+        ) from e
+
+    context = {
+        "input_file": str(input_path.name),
+        "source_lang": source_lang,
+        "target_lang": target_lang,
+        "backend": backend,
+    }
+
+    logger.info(
+        f"Starting translation: {input_path.name} ({source_lang} -> {target_lang})",
+        extra=context,
+    )
+
+    if output_path is None:
+        # Default output: <input_dir>/<input_name>.<target_lang>.srt
+        output_path = input_path.with_suffix(f".{target_lang}.srt")
+
+    config = TranslatorConfig(
+        backend=backend,  # type: ignore[arg-type]
+        model_name=model_name,
+        device=device,
+        batch_size=batch_size,
+    )
+
+    translator = Translator(config=config)
+
+    # Check if language pair is supported
+    if not translator.is_language_pair_supported(source_lang, target_lang):
+        raise ValueError(
+            f"Language pair '{source_lang}' -> '{target_lang}' not supported "
+            f"with backend '{backend}'. Use 'subsvc languages --backend {backend}' "
+            "to see supported languages."
+        )
+
+    pbar = tqdm(total=100, unit="%", desc="Translating", leave=True)
+
+    def progress_cb(pct: float, count: int) -> None:
+        pbar.n = int(pct)
+        pbar.refresh()
+
+    try:
+        result_path = translator.translate_srt_file(
+            input_path=input_path,
+            output_path=output_path,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            progress_callback=progress_cb,
+        )
+        pbar.n = 100
+        pbar.refresh()
+        logger.info(
+            f"Successfully translated subtitles: {result_path.name}",
+            extra={**context, "output_file": str(result_path)},
+        )
+        return result_path
+    finally:
+        pbar.close()
+
+
+def _run_list_languages(backend: str) -> None:
+    """
+    List supported languages for a translation backend.
+    """
+    try:
+        from .core.translation import list_supported_languages
+    except ImportError as e:
+        raise ImportError(
+            "Translation requires additional dependencies. "
+            "Install with: pip install homelab-subtitle-service[translation]"
+        ) from e
+
+    languages = list_supported_languages(backend)  # type: ignore[arg-type]
+
+    print(f"\nSupported languages for '{backend}' backend:")
+    print(f"{'=' * 50}")
+    print(f"{'Code':<8} | {'Language':<30}")
+    print(f"{'-' * 8}-+-{'-' * 30}")
+
+    for code, name in sorted(languages.items()):
+        print(f"{code:<8} | {name:<30}")
+
+    print(f"\nTotal: {len(languages)} languages")
+    print()
+
+
+def _run_sync(
+    video_path: Path,
+    srt_path: Path,
+    output_path: Optional[Path],
+    lang: Optional[str],
+    model_name: str,
+    device: str,
+    compute_type: str,
+    min_similarity: float,
+    interpolate: bool,
+) -> Path:
+    """
+    Synchronize subtitle timing with video audio.
+    """
+    from .core.sync import SubtitleSyncer, SyncConfig, SyncResult
+
+    context = {
+        "video_file": str(video_path.name),
+        "srt_file": str(srt_path.name),
+    }
+
+    logger.info(
+        f"Starting subtitle sync: {srt_path.name} -> {video_path.name}",
+        extra=context,
+    )
+
+    config = SyncConfig(
+        model_name=model_name,
+        device=device,
+        compute_type=compute_type,
+        language=lang,
+        min_similarity=min_similarity,
+        interpolate_unmatched=interpolate,
+    )
+
+    syncer = SubtitleSyncer(config)
+
+    pbar = tqdm(total=100, unit="%", desc="Transcribing for sync", leave=True)
+
+    def progress_cb(pct: float, count: int) -> None:
+        pbar.n = int(pct)
+        pbar.refresh()
+
+    try:
+        result: SyncResult = syncer.sync_subtitles(
+            video_path=video_path,
+            srt_path=srt_path,
+            output_path=output_path,
+            progress_callback=progress_cb,
+        )
+        pbar.n = 100
+        pbar.refresh()
+    finally:
+        pbar.close()
+
+    # Print summary
+    print(f"\n{'=' * 60}")
+    print("Synchronization Summary")
+    print(f"{'=' * 60}")
+    print(f"Total subtitles:     {len(result.synced_cues)}")
+    print(f"Matched:             {result.matched_count}")
+    print(f"Interpolated:        {result.interpolated_count}")
+    print(f"Unchanged:           {result.unchanged_count}")
+    print(f"Average offset:      {result.avg_offset_seconds:.2f}s")
+    print(f"Maximum offset:      {result.max_offset_seconds:.2f}s")
+    print()
+
+    # Determine output path
+    if output_path is None:
+        output_path = srt_path.with_suffix(".synced.srt")
+
+    logger.info(
+        f"Successfully synchronized subtitles: {output_path.name}",
+        extra={**context, "output_file": str(output_path)},
+    )
+
+    return output_path
+
+
+def _run_compare(
+    reference_path: Path,
+    hypothesis_path: Path,
+    timing_threshold: float,
+    detailed: bool,
+    output_json: bool,
+    output_path: Optional[Path],
+) -> None:
+    """
+    Compare reference (human) subtitles with hypothesis (machine) subtitles.
+    """
+    from .core.comparison import (
+        SubtitleComparator,
+        format_comparison_report,
+    )
+    import json
+
+    context = {
+        "reference_file": str(reference_path.name),
+        "hypothesis_file": str(hypothesis_path.name),
+    }
+
+    logger.info(
+        f"Comparing subtitles: {reference_path.name} vs {hypothesis_path.name}",
+        extra=context,
+    )
+
+    comparator = SubtitleComparator(timing_threshold_ms=timing_threshold)
+    result = comparator.compare_files(reference_path, hypothesis_path)
+
+    if output_json:
+        # JSON output
+        output_data = {
+            "reference": str(result.reference_path) if result.reference_path else None,
+            "hypothesis": str(result.hypothesis_path)
+            if result.hypothesis_path
+            else None,
+            "overall_score": result.overall_score,
+            "text_metrics": {
+                "word_error_rate": result.text_metrics.word_error_rate,
+                "character_error_rate": result.text_metrics.character_error_rate,
+                "avg_similarity": result.text_metrics.avg_similarity,
+                "exact_match_count": result.text_metrics.exact_match_count,
+                "total_words_reference": result.text_metrics.total_words_reference,
+                "total_words_hypothesis": result.text_metrics.total_words_hypothesis,
+                "insertions": result.text_metrics.insertions,
+                "deletions": result.text_metrics.deletions,
+                "substitutions": result.text_metrics.substitutions,
+            },
+            "timing_metrics": {
+                "avg_start_offset_ms": result.timing_metrics.avg_start_offset_ms,
+                "avg_end_offset_ms": result.timing_metrics.avg_end_offset_ms,
+                "max_start_offset_ms": result.timing_metrics.max_start_offset_ms,
+                "max_end_offset_ms": result.timing_metrics.max_end_offset_ms,
+                "timing_accuracy_pct": result.timing_metrics.timing_accuracy_pct,
+                "overlap_ratio": result.timing_metrics.overlap_ratio,
+            },
+            "segment_metrics": {
+                "reference_count": result.segment_metrics.reference_count,
+                "hypothesis_count": result.segment_metrics.hypothesis_count,
+                "matched_count": result.segment_metrics.matched_count,
+                "unmatched_reference": result.segment_metrics.unmatched_reference,
+                "unmatched_hypothesis": result.segment_metrics.unmatched_hypothesis,
+                "segmentation_similarity": result.segment_metrics.segmentation_similarity,
+            },
+        }
+        report = json.dumps(output_data, indent=2)
+    else:
+        report = format_comparison_report(result, detailed=detailed)
+
+    if output_path:
+        output_path.write_text(report)
+        logger.info(f"Report saved to: {output_path}", extra=context)
+    else:
+        print(report)
+
+    logger.info(
+        f"Comparison complete. Overall score: {result.overall_score:.1f}/100",
+        extra={**context, "overall_score": result.overall_score},
+    )
+
+
+def _run_benchmark(
+    video_path: Path,
+    reference_path: Path,
+    lang: str,
+    models: list[str],
+    compute_types: list[str],
+    device: str,
+    task: TranscriptionTask,
+    timing_threshold: float,
+    output_dir: Optional[Path],
+    output_json: bool,
+) -> None:
+    """
+    Benchmark different models/settings against a reference.
+    """
+    from .core.comparison import SubtitleComparator
+    import json
+    import time
+
+    if output_dir is None:
+        output_dir = Path.cwd()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    context = {
+        "video_file": str(video_path.name),
+        "reference_file": str(reference_path.name),
+    }
+
+    logger.info(
+        f"Starting benchmark for {video_path.name} with {len(models) * len(compute_types)} configurations",
+        extra=context,
+    )
+
+    comparator = SubtitleComparator(timing_threshold_ms=timing_threshold)
+    results: list[dict[str, Any]] = []
+
+    service = JobService(
+        enable_monitoring=True,
+        enable_db_logging=False,
+    )
+
+    total_configs = len(models) * len(compute_types)
+    config_num = 0
+
+    for model_name in models:
+        for compute_type in compute_types:
+            config_num += 1
+            config_id = f"{model_name}_{compute_type}"
+
+            print(f"\n[{config_num}/{total_configs}] Benchmarking: {config_id}")
+            logger.info(
+                f"Running configuration: model={model_name}, compute_type={compute_type}",
+                extra={**context, "model": model_name, "compute_type": compute_type},
+            )
+
+            # Generate output path for this configuration
+            srt_output = output_dir / f"{video_path.stem}.{config_id}.srt"
+
+            # Measure generation time
+            start_time = time.time()
+
+            pbar = tqdm(
+                total=100, unit="%", desc=f"Transcribing ({config_id})", leave=False
+            )
+
+            def progress_cb(pct: float, count: int) -> None:
+                pbar.n = int(pct)
+                pbar.refresh()
+
+            try:
+                result_path = service.generate_subtitles(
+                    video_path=video_path,
+                    output_path=srt_output,
+                    lang=lang,
+                    model_name=model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    task=task,
+                    beam_size=5,
+                    vad_filter=True,
+                    job_id=f"bench_{config_id}",
+                    progress_callback=progress_cb,
+                )
+                pbar.close()
+            except Exception as exc:
+                pbar.close()
+                logger.error(f"Configuration {config_id} failed: {exc}", extra=context)
+                results.append(
+                    {
+                        "model": model_name,
+                        "compute_type": compute_type,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+                continue
+
+            generation_time = time.time() - start_time
+
+            # Compare with reference
+            comparison = comparator.compare_files(reference_path, result_path)
+
+            result_entry = {
+                "model": model_name,
+                "compute_type": compute_type,
+                "status": "success",
+                "output_path": str(result_path),
+                "generation_time_seconds": round(generation_time, 2),
+                "overall_score": round(comparison.overall_score, 2),
+                "word_error_rate": round(comparison.text_metrics.word_error_rate, 4),
+                "character_error_rate": round(
+                    comparison.text_metrics.character_error_rate, 4
+                ),
+                "avg_similarity": round(comparison.text_metrics.avg_similarity, 4),
+                "timing_accuracy_pct": round(
+                    comparison.timing_metrics.timing_accuracy_pct, 2
+                ),
+            }
+            results.append(result_entry)
+
+            logger.info(
+                f"Configuration {config_id} complete: "
+                f"score={comparison.overall_score:.1f}, "
+                f"WER={comparison.text_metrics.word_error_rate:.2%}, "
+                f"time={generation_time:.1f}s",
+                extra={**context, **result_entry},
+            )
+
+    # Print summary
+    print("\n" + "=" * 80)
+    print("BENCHMARK SUMMARY")
+    print("=" * 80)
+
+    if output_json:
+        summary = {
+            "video": str(video_path),
+            "reference": str(reference_path),
+            "device": device,
+            "results": results,
+        }
+        print(json.dumps(summary, indent=2))
+    else:
+        print(
+            f"{'Model':<15} | {'Compute':<12} | {'Score':>8} | {'WER':>8} | {'Time (s)':>10} | {'Status':<10}"
+        )
+        print(
+            "-" * 15
+            + "-+-"
+            + "-" * 12
+            + "-+-"
+            + "-" * 8
+            + "-+-"
+            + "-" * 8
+            + "-+-"
+            + "-" * 10
+            + "-+-"
+            + "-" * 10
+        )
+
+        for r in results:
+            if r["status"] == "success":
+                print(
+                    f"{r['model']:<15} | {r['compute_type']:<12} | "
+                    f"{r['overall_score']:>8.1f} | {r['word_error_rate']:>7.2%} | "
+                    f"{r['generation_time_seconds']:>10.1f} | {r['status']:<10}"
+                )
+            else:
+                print(
+                    f"{r['model']:<15} | {r['compute_type']:<12} | "
+                    f"{'N/A':>8} | {'N/A':>8} | {'N/A':>10} | {r['status']:<10}"
+                )
+
+        # Find best configuration
+        successful = [r for r in results if r["status"] == "success"]
+        if successful:
+            best_score = max(successful, key=lambda x: x["overall_score"])
+            best_speed = min(successful, key=lambda x: x["generation_time_seconds"])
+
+            print("\n" + "-" * 80)
+            print(
+                f"Best Quality:  {best_score['model']} / {best_score['compute_type']} "
+                f"(score: {best_score['overall_score']:.1f}, WER: {best_score['word_error_rate']:.2%})"
+            )
+            print(
+                f"Fastest:       {best_speed['model']} / {best_speed['compute_type']} "
+                f"(time: {best_speed['generation_time_seconds']:.1f}s, score: {best_speed['overall_score']:.1f})"
+            )
+
+    print()
+
+    # Save detailed report
+    report_path = output_dir / f"benchmark_report_{video_path.stem}.json"
+    report_data = {
+        "video": str(video_path),
+        "reference": str(reference_path),
+        "device": device,
+        "language": lang,
+        "results": results,
+    }
+    report_path.write_text(json.dumps(report_data, indent=2))
+    logger.info(f"Benchmark report saved to: {report_path}", extra=context)
+
+
+def _run_server(
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    reload: bool = False,
+    workers: int = 1,
+) -> None:
+    """
+    Run the FastAPI server for job queue management.
+
+    Requires the 'server' optional dependencies to be installed:
+        pip install homelab-subs[server]
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        logger.error(
+            "Server dependencies not installed. "
+            "Install with: pip install homelab-subs[server]"
+        )
+        raise SystemExit(1)
+
+    logger.info(f"Starting server at http://{host}:{port}")
+    logger.info("API docs available at http://{host}:{port}/docs")
+
+    uvicorn.run(
+        "homelab_subs.server.api:app",
+        host=host,
+        port=port,
+        reload=reload,
+        workers=workers if not reload else 1,
+        log_level="info",
+    )
+
+
+def _run_worker(
+    queues: list[str],
+    burst: bool = False,
+    name: Optional[str] = None,
+) -> None:
+    """
+    Run an RQ worker to process subtitle generation jobs.
+
+    Requires the 'server' optional dependencies to be installed:
+        pip install homelab-subs[server]
+    """
+    try:
+        from homelab_subs.server.worker import run_worker
+    except ImportError:
+        logger.error(
+            "Server dependencies not installed. "
+            "Install with: pip install homelab-subs[server]"
+        )
+        raise SystemExit(1)
+
+    logger.info(f"Starting worker on queues: {queues}")
+    if burst:
+        logger.info("Running in burst mode (will exit when queues empty)")
+
+    run_worker(queues=queues, burst=burst, name=name)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    # Setup logging
+    log_file = getattr(args, "log_file", None)
+    log_level = getattr(args, "log_level", "INFO")
+    setup_logging(level=log_level, log_file=log_file)
+
+    try:
+        if args.command == "generate":
+            srt_path = _run_generate(
+                video_path=args.video,
+                output_path=args.output,
+                lang=args.lang,
+                model_name=args.model,
+                device=args.device,
+                compute_type=args.compute_type,
+                task=args.task,
+                beam_size=args.beam_size,
+                vad_filter=not args.no_vad,
+                enable_monitoring=args.enable_monitoring,
+                enable_db_logging=args.enable_db_logging,
+                db_path=args.db_path,
+                target_lang=args.target_lang,
+                translation_backend=args.translation_backend,
+                translation_model=args.translation_model,
+            )
+            logger.info(f"✓ Subtitles written to: {srt_path}")
+            return 0
+
+        if args.command == "batch":
+            _run_batch(args.config)
+            return 0
+
+        if args.command == "history":
+            _run_history(
+                limit=args.limit,
+                status=args.status,
+                db_path=args.db_path,
+                show_stats=args.stats,
+                job_id=args.job_id,
+            )
+            return 0
+
+        if args.command == "translate":
+            srt_path = _run_translate(
+                input_path=args.input,
+                output_path=args.output,
+                source_lang=args.source_lang,
+                target_lang=args.target_lang,
+                backend=args.backend,
+                model_name=args.model,
+                device=args.device,
+                batch_size=args.batch_size,
+            )
+            logger.info(f"✓ Translated subtitles written to: {srt_path}")
+            return 0
+
+        if args.command == "languages":
+            _run_list_languages(backend=args.backend)
+            return 0
+
+        if args.command == "sync":
+            srt_path = _run_sync(
+                video_path=args.video,
+                srt_path=args.srt,
+                output_path=args.output,
+                lang=args.lang,
+                model_name=args.model,
+                device=args.device,
+                compute_type=args.compute_type,
+                min_similarity=args.min_similarity,
+                interpolate=args.interpolate,
+            )
+            logger.info(f"✓ Synchronized subtitles written to: {srt_path}")
+            return 0
+
+        if args.command == "compare":
+            _run_compare(
+                reference_path=args.reference,
+                hypothesis_path=args.hypothesis,
+                timing_threshold=args.timing_threshold,
+                detailed=args.detailed,
+                output_json=args.output_json,
+                output_path=args.output,
+            )
+            return 0
+
+        if args.command == "benchmark":
+            _run_benchmark(
+                video_path=args.video,
+                reference_path=args.reference,
+                lang=args.lang,
+                models=args.models,
+                compute_types=args.compute_types,
+                device=args.device,
+                task=args.task,
+                timing_threshold=args.timing_threshold,
+                output_dir=args.output_dir,
+                output_json=args.output_json,
+            )
+            return 0
+
+        if args.command == "server":
+            _run_server(
+                host=args.host,
+                port=args.port,
+                reload=args.reload,
+                workers=args.workers,
+            )
+            return 0
+
+        if args.command == "worker":
+            _run_worker(
+                queues=args.queues,
+                burst=args.burst,
+                name=args.name,
+            )
+            return 0
+
+        parser.error(f"Unknown command: {args.command}")
+        return 1
+
+    except (FFmpegError, FileNotFoundError, ValueError) as exc:
+        logger.error(f"Error: {exc}", exc_info=True)
+        return 1
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
