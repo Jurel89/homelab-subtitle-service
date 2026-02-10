@@ -1,0 +1,30 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+title: "[FR-NNNN] "
+labels: ["type:feature", "status:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > Replace `NNNN` with the next sequential ID.
+        > Run: `gh issue list --search "FR-" --state all --json title --jq '.[].title' | grep -oE "FR-[0-9]+" | sort -t'-' -k2 -n | tail -1`
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Brief description of the feature
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this feature needed?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: false
