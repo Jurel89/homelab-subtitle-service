@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Issue Naming Convention
+    url: https://github.com/Jurel89/homelab-subtitle-service/blob/main/standards/issue_ids.yml
+    about: All issues must follow the [PREFIX-NNNN] title format. Check this file for valid prefixes and ID lookup instructions.
+  - name: Documentation
+    url: https://github.com/Jurel89/homelab-subtitle-service/docs
+    about: Check the documentation before filing an issue
