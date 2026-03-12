@@ -21,7 +21,8 @@ from uuid import UUID
 
 try:
     from passlib.context import CryptContext
-    from jose import JWTError, jwt
+    import jwt
+    from jwt.exceptions import PyJWTError as JWTError
     from pydantic import BaseModel
 
     AUTH_DEPS_AVAILABLE = True
