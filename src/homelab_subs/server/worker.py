@@ -83,7 +83,7 @@ class JobContext:
     def check_cancelled(self) -> bool:
         """Check if job has been cancelled. Refreshes from database."""
         self.session.refresh(self.job)
-        return self.job.status == JobStatus.CANCELLED
+        return self.job.status == JobStatus.CANCELED
 
     def raise_if_cancelled(self):
         """Raise JobCancelledException if job was cancelled."""
@@ -115,7 +115,7 @@ class JobContext:
 
     def complete(self, output_path: Optional[str] = None):
         """Mark job as completed."""
-        self.job.status = JobStatus.COMPLETED
+        self.job.status = JobStatus.DONE
         self.job.stage = JobStage.COMPLETED
         self.job.progress = 100
         if output_path:
@@ -180,12 +180,10 @@ def process_job(job_id: str) -> dict:
                 result = _process_transcription(ctx)
             elif job_type == JobType.TRANSLATE:
                 result = _process_translation(ctx)
-            elif job_type == JobType.SYNC:
+            elif job_type == JobType.SYNC_SUBTITLE:
                 result = _process_sync(ctx)
             elif job_type == JobType.COMPARE:
                 result = _process_comparison(ctx)
-            elif job_type == JobType.FULL_PIPELINE:
-                result = _process_full_pipeline(ctx)
             else:
                 raise ValueError(f"Unknown job type: {job_type}")
 
@@ -479,107 +477,6 @@ def _process_comparison(ctx: JobContext) -> dict:
         "output_path": str(output_path),
         "wer": result.text_metrics.wer,
         "cer": result.text_metrics.cer,
-    }
-
-
-def _process_full_pipeline(ctx: JobContext) -> dict:
-    """
-    Process a full pipeline job.
-
-    Complete workflow: video -> audio -> transcription -> (optional translation) -> SRT
-    Stages: EXTRACTING_AUDIO -> TRANSCRIBING -> TRANSLATING (optional) -> GENERATING_SRT
-    """
-    input_path = Path(ctx.job.input_path)
-    output_path = (
-        Path(ctx.job.output_path)
-        if ctx.job.output_path
-        else input_path.with_suffix(".srt")
-    )
-
-    options = ctx.job.options or {}
-    model_size = ctx.job.model_size or "base"
-    compute_type = ctx.job.compute_type or "float16"
-    source_lang = ctx.job.source_language
-    target_lang = ctx.job.target_language
-
-    # Stage 1: Extract audio
-    ctx.update_stage(JobStage.EXTRACTING_AUDIO, 0)
-    ctx.add_log(f"Extracting audio from {input_path}")
-    ctx.raise_if_cancelled()
-
-    audio_extractor = AudioExtractor()
-    audio_path = ctx.create_temp_file(suffix=".wav")
-
-    video_extensions = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
-    if input_path.suffix.lower() in video_extensions:
-        audio_extractor.extract(str(input_path), str(audio_path))
-        ctx.add_log("Audio extracted successfully")
-    else:
-        audio_path = input_path
-
-    ctx.update_progress(10)
-    ctx.raise_if_cancelled()
-
-    # Stage 2: Transcribe
-    ctx.update_stage(JobStage.TRANSCRIBING, 10)
-    ctx.add_log(f"Transcribing with model={model_size}, compute_type={compute_type}")
-
-    transcriber = WhisperTranscriber(
-        model_size=model_size,
-        compute_type=compute_type,
-        device=options.get("device", "auto"),
-    )
-
-    segments = transcriber.transcribe(
-        str(audio_path),
-        language=source_lang,
-        task="transcribe",
-    )
-
-    ctx.update_progress(50)
-    ctx.add_log(f"Transcription complete: {len(segments)} segments")
-    ctx.raise_if_cancelled()
-
-    # Stage 3: Translate (if target language specified)
-    cues = segments  # Will be replaced if translation happens
-
-    if target_lang and target_lang != source_lang:
-        ctx.update_stage(JobStage.TRANSLATING, 50)
-        ctx.add_log(f"Translating from {source_lang or 'auto'} to {target_lang}")
-
-        translator = SubtitleTranslator(
-            source_lang=source_lang or "auto",
-            target_lang=target_lang,
-        )
-
-        cues = translator.translate_cues(segments)
-        ctx.update_progress(80)
-        ctx.add_log(f"Translation complete: {len(cues)} cues")
-
-        # Update output path to include target language
-        if not ctx.job.output_path:
-            output_path = input_path.with_stem(
-                f"{input_path.stem}.{target_lang}"
-            ).with_suffix(".srt")
-    else:
-        ctx.update_progress(80)
-
-    ctx.raise_if_cancelled()
-
-    # Stage 4: Generate SRT
-    ctx.update_stage(JobStage.GENERATING_SRT, 80)
-    ctx.add_log(f"Generating SRT file at {output_path}")
-
-    generator = SRTGenerator()
-    generator.generate_from_cues(cues, str(output_path))
-
-    ctx.update_progress(100)
-    ctx.add_log("SRT generated successfully")
-
-    return {
-        "output_path": str(output_path),
-        "segments_count": len(cues),
-        "translated": bool(target_lang and target_lang != source_lang),
     }
 
 
