@@ -20,11 +20,11 @@ from sqlalchemy.orm import sessionmaker
 
 from homelab_subs.server.settings import get_settings
 from homelab_subs.server.models import Job, JobStatus, JobStage, JobType
-from homelab_subs.core.audio import AudioExtractor
-from homelab_subs.core.transcription import WhisperTranscriber
-from homelab_subs.core.translation import SubtitleTranslator
-from homelab_subs.core.srt import SRTParser, SRTGenerator
-from homelab_subs.core.sync import SubtitleSynchronizer
+from homelab_subs.core.audio import FFmpeg
+from homelab_subs.core.transcription import Transcriber, TranscriberConfig
+from homelab_subs.core.translation import Translator, TranslatorConfig
+from homelab_subs.core.srt import segments_to_srt, write_srt_file
+from homelab_subs.core.sync import SubtitleSyncer, parse_srt_content
 from homelab_subs.core.comparison import SubtitleComparator
 
 logger = logging.getLogger(__name__)
