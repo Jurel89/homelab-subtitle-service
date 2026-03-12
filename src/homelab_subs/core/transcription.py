@@ -206,4 +206,3 @@ class Transcriber:
         logger.info(f"Transcription complete: {len(segments)} segments generated")
 
         return segments
-

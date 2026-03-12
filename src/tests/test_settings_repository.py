@@ -54,17 +54,12 @@ def in_memory_settings_repository(mock_settings):
     """Create a SettingsRepository with in-memory SQLite for testing."""
     from homelab_subs.server.repository import SettingsRepository
 
-    with patch(
-        "homelab_subs.server.repository.get_settings", return_value=mock_settings
-    ):
-        repo = SettingsRepository(
-            database_url="sqlite:///:memory:", settings=mock_settings
-        )
-        # Create all tables
-        from homelab_subs.server.models import Base
+    repo = SettingsRepository(database_url="sqlite:///:memory:", settings=mock_settings)
+    # Create all tables
+    from homelab_subs.server.models import Base
 
-        Base.metadata.create_all(repo._engine)
-        yield repo
+    Base.metadata.create_all(repo._engine)
+    yield repo
 
 
 class TestSettingsRepositoryInit:
@@ -144,7 +139,9 @@ class TestUpdateSettings:
         self, in_memory_settings_repository
     ):
         """update_settings should create settings if none exist."""
-        settings = in_memory_settings_repository.update_settings(default_model="large-v2")
+        settings = in_memory_settings_repository.update_settings(
+            default_model="large-v2"
+        )
 
         assert settings is not None
         assert settings.id == 1

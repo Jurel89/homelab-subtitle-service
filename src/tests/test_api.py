@@ -455,11 +455,18 @@ def test_health_check(test_client):
 
 
 def test_create_job_nonexistent_path(test_client):
-    response = test_client.post("/jobs", json={
-        "input_path": "/nonexistent/video.mp4",
-        "type": "transcribe",
-    })
-    assert response.status_code in (400, 401, 422)  # 401 if auth enforced, 400/422 otherwise
+    response = test_client.post(
+        "/jobs",
+        json={
+            "input_path": "/nonexistent/video.mp4",
+            "type": "transcribe",
+        },
+    )
+    assert response.status_code in (
+        400,
+        401,
+        422,
+    )  # 401 if auth enforced, 400/422 otherwise
 
 
 def test_get_nonexistent_job(test_client):
@@ -473,5 +480,7 @@ class TestFilesBrowserSecurity:
         assert response.status_code in (403, 401)
 
     def test_path_traversal_with_dotdot_returns_403(self, test_client):
-        response = test_client.get("/files", params={"path": "/allowed/../../../etc/passwd"})
+        response = test_client.get(
+            "/files", params={"path": "/allowed/../../../etc/passwd"}
+        )
         assert response.status_code in (403, 401)

@@ -37,7 +37,9 @@ def normalize_text(text: str) -> str:
     text = re.sub(r"^[A-Z]+:\s*", "", text, flags=re.MULTILINE)
 
     # Normalize punctuation
-    text = re.sub(r"[\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]", '"', text)  # Normalize quotes
+    text = re.sub(
+        r"[\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]", '"', text
+    )  # Normalize quotes
     text = re.sub(r"[\u2013\u2014]", "-", text)  # Normalize dashes
     text = re.sub(r"\u2026", "...", text)  # Normalize ellipsis
 

@@ -408,7 +408,7 @@ async def health_check(service: ServerJobService = Depends(get_job_service)):
 
     try:
         # Check database
-        await service.repository.get_statistics()
+        service.repository.get_statistics()
         db_status = "healthy"
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
@@ -416,7 +416,7 @@ async def health_check(service: ServerJobService = Depends(get_job_service)):
 
     try:
         # Check Redis
-        service.queue_client.get_queue_status()
+        service.queue_client.get_queue_stats()
         redis_status = "healthy"
     except Exception as e:
         logger.error(f"Redis health check failed: {e}")
@@ -531,14 +531,14 @@ async def create_job(
         )
 
     try:
-        job = await service.create_job(
+        job = service.create_job(
             job_type=request.type,
-            input_path=request.input_path,
+            source_path=request.input_path,
             output_path=request.output_path,
-            reference_path=request.reference_path,
-            source_language=request.source_language,
+            subtitle_path=request.reference_path,
+            language=request.source_language or "en",
             target_language=request.target_language,
-            model_size=request.model_size,
+            model_name=request.model_size,
             compute_type=request.compute_type,
             priority=request.priority,
             options=request.options,
@@ -567,7 +567,7 @@ async def list_jobs(
     """
     offset = (page - 1) * page_size
 
-    jobs, total = await service.list_jobs(
+    jobs, total = service.list_jobs(
         status=status,
         job_type=job_type,
         limit=page_size + 1,  # Fetch one extra to check for more
@@ -603,7 +603,7 @@ async def get_job(
 
     Returns full job information including progress, stage, and any errors.
     """
-    job = await service.get_job(str(job_id))
+    job = service.get_job(str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
@@ -626,7 +626,7 @@ async def get_job_logs(
 
     Returns the accumulated logs from job processing.
     """
-    job = await service.get_job(str(job_id))
+    job = service.get_job(str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
@@ -656,11 +656,11 @@ async def download_output(
 
     Returns the generated SRT file or comparison report.
     """
-    job = await service.get_job(str(job_id))
+    job = service.get_job(str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
-    if job.status != JobStatus.COMPLETED:
+    if job.status != JobStatus.DONE:
         raise HTTPException(
             status_code=400,
             detail=f"Job is not completed (status: {job.status})",
@@ -712,7 +712,7 @@ async def cancel_job(
     stage before stopping.
     """
     try:
-        job = await service.cancel_job(str(job_id))
+        job = service.cancel_job(str(job_id))
         return _job_to_response(job)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -740,7 +740,7 @@ async def retry_job(
     Creates a new job with the same parameters and queues it for processing.
     """
     try:
-        job = await service.retry_job(str(job_id))
+        job = service.retry_job(str(job_id))
         return _job_to_response(job)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -767,7 +767,7 @@ async def delete_job(
 
     Only completed, failed, or cancelled jobs can be deleted.
     """
-    job = await service.get_job(str(job_id))
+    job = service.get_job(str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
@@ -777,7 +777,7 @@ async def delete_job(
             detail=f"Cannot delete job with status: {job.status}. Cancel it first.",
         )
 
-    await service.repository.delete(str(job_id))
+    service.repository.delete(str(job_id))
     return None
 
 
@@ -824,14 +824,14 @@ async def create_batch_jobs(
     # Create all jobs
     jobs = []
     for req in requests:
-        job = await service.create_job(
+        job = service.create_job(
             job_type=req.type,
-            input_path=req.input_path,
+            source_path=req.input_path,
             output_path=req.output_path,
-            reference_path=req.reference_path,
-            source_language=req.source_language,
+            subtitle_path=req.reference_path,
+            language=req.source_language or "en",
             target_language=req.target_language,
-            model_size=req.model_size,
+            model_name=req.model_size,
             compute_type=req.compute_type,
             priority=req.priority,
             options=req.options,
@@ -883,7 +883,7 @@ def _job_to_response(job) -> JobResponse:
         compute_type=job.compute_type,
         error_message=job.error_message,
         created_at=job.created_at,
-        updated_at=job.created_at,
+        updated_at=job.finished_at or job.started_at or job.created_at,
         started_at=job.started_at,
         completed_at=job.finished_at,
     )
@@ -1036,7 +1036,11 @@ async def refresh_token(request: RefreshRequest):
     Use this when the access token has expired but the refresh token
     is still valid.
     """
-    from homelab_subs.server.auth import validate_refresh_token, create_token_pair, decode_token
+    from homelab_subs.server.auth import (
+        validate_refresh_token,
+        create_token_pair,
+        decode_token,
+    )
 
     try:
         user_id = validate_refresh_token(request.refresh_token)

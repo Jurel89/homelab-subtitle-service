@@ -270,7 +270,14 @@ class JobRepository(BaseRepository):
                 query = query.where(and_(*conditions))
 
             # Apply ordering
-            VALID_ORDER_FIELDS = {"created_at", "started_at", "finished_at", "status", "priority", "type"}
+            VALID_ORDER_FIELDS = {
+                "created_at",
+                "started_at",
+                "finished_at",
+                "status",
+                "priority",
+                "type",
+            }
             if order_by not in VALID_ORDER_FIELDS:
                 order_by = "created_at"
             order_column = getattr(Job, order_by)
@@ -604,9 +611,12 @@ class JobRepository(BaseRepository):
 
             # Jobs created in last 24h
             cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-            jobs_last_24h = session.scalar(
-                select(func.count(Job.id)).where(Job.created_at > cutoff)
-            ) or 0
+            jobs_last_24h = (
+                session.scalar(
+                    select(func.count(Job.id)).where(Job.created_at > cutoff)
+                )
+                or 0
+            )
 
             # Total jobs
             total = sum(status_counts.values())
@@ -617,7 +627,9 @@ class JobRepository(BaseRepository):
                 "avg_duration_seconds": float(avg_duration) if avg_duration else None,
                 "pending_count": status_counts.get(JobStatus.PENDING.value, 0),
                 "running_count": status_counts.get(JobStatus.RUNNING.value, 0),
-                "avg_processing_time_seconds": float(avg_processing_time) if avg_processing_time else None,
+                "avg_processing_time_seconds": float(avg_processing_time)
+                if avg_processing_time
+                else None,
                 "jobs_by_type": jobs_by_type,
                 "jobs_last_24h": jobs_last_24h,
             }

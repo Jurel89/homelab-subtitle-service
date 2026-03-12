@@ -1,4 +1,5 @@
 """Tests for the MonitoredPipeline backward-compatibility wrapper."""
+
 from __future__ import annotations
 
 from pathlib import Path

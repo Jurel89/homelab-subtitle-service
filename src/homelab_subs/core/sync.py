@@ -163,6 +163,7 @@ def parse_srt_file(srt_path: Path, encoding: str = "utf-8") -> list[SubtitleCue]
 # parse_srt_content is re-exported from text_utils for backward compatibility.
 # Callers that imported it from this module continue to work.
 
+
 def write_srt_from_cues(
     cues: list[SubtitleCue],
     output_path: Path,

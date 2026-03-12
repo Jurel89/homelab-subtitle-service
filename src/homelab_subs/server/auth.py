@@ -284,7 +284,9 @@ def create_token_pair(
     TokenPair
         Access and refresh tokens with metadata.
     """
-    access_token = create_access_token(user_id, username, is_admin, token_version=token_version)
+    access_token = create_access_token(
+        user_id, username, is_admin, token_version=token_version
+    )
     refresh_token = create_refresh_token(user_id, token_version=token_version)
 
     return TokenPair(

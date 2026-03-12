@@ -19,11 +19,11 @@ COPY src ./src
 # DL3013: Pin pip version for reproducibility
 # DL3042: Use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir --upgrade pip==25.0.1 \
-    && pip install --no-cache-dir .
+    && pip install --no-cache-dir ".[server]"
 
 # Create non-root user and set permissions
 RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
-    && chown -R appuser:appuser /app
+    && mkdir -p /media && chown -R appuser:appuser /app /media
 USER appuser
 
 # Default entrypoint is the CLI

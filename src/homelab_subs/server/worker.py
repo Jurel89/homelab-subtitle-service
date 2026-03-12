@@ -312,10 +312,12 @@ def _process_translation(ctx: JobContext) -> dict:
     ctx.add_log(f"Translating {input_path} from {source_lang} to {target_lang}")
     ctx.raise_if_cancelled()
 
-    translator = Translator(config=TranslatorConfig(
-        backend=options.get("backend", "nllb"),
-        device=ctx.job.device or "cpu",
-    ))
+    translator = Translator(
+        config=TranslatorConfig(
+            backend=options.get("backend", "nllb"),
+            device=ctx.job.device or "cpu",
+        )
+    )
 
     def translation_progress(pct: float, items_done: int):
         # Map translation progress to 0-90% of job progress
@@ -402,18 +404,20 @@ def _process_comparison(ctx: JobContext) -> dict:
     import json
     from dataclasses import asdict
 
+    if not ctx.job.subtitle_path:
+        raise ValueError(
+            "Subtitle path (hypothesis SRT) is required for comparison jobs"
+        )
+
     reference_path = Path(ctx.job.source_path)  # Reference (human) subtitles
     hypothesis_path = Path(ctx.job.subtitle_path)  # Hypothesis (machine) subtitles
     output_path = (
         Path(ctx.job.output_path)
         if ctx.job.output_path
-        else reference_path.with_stem(f"{reference_path.stem}_comparison").with_suffix(".json")
-    )
-
-    if not ctx.job.subtitle_path:
-        raise ValueError(
-            "Subtitle path (hypothesis SRT) is required for comparison jobs"
+        else reference_path.with_stem(f"{reference_path.stem}_comparison").with_suffix(
+            ".json"
         )
+    )
 
     ctx.update_stage(JobStage.COMPARING, 0)
     ctx.add_log(f"Comparing {reference_path} with {hypothesis_path}")

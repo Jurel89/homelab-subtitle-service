@@ -105,9 +105,13 @@ class Settings(BaseSettings):
         validated = []
         for origin in origins:
             if origin == "*":
-                raise ValueError("Wildcard '*' is not allowed in CORS_ORIGINS when credentials are enabled")
+                raise ValueError(
+                    "Wildcard '*' is not allowed in CORS_ORIGINS when credentials are enabled"
+                )
             if not origin.startswith(("http://", "https://")):
-                raise ValueError(f"Invalid CORS origin: {origin}. Must start with http:// or https://")
+                raise ValueError(
+                    f"Invalid CORS origin: {origin}. Must start with http:// or https://"
+                )
             validated.append(origin)
         return validated
 

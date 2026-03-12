@@ -54,15 +54,12 @@ def in_memory_user_repository(mock_settings):
     """Create a UserRepository with in-memory SQLite for testing."""
     from homelab_subs.server.repository import UserRepository
 
-    with patch(
-        "homelab_subs.server.repository.get_settings", return_value=mock_settings
-    ):
-        repo = UserRepository(database_url="sqlite:///:memory:", settings=mock_settings)
-        # Create all tables
-        from homelab_subs.server.models import Base
+    repo = UserRepository(database_url="sqlite:///:memory:", settings=mock_settings)
+    # Create all tables
+    from homelab_subs.server.models import Base
 
-        Base.metadata.create_all(repo._engine)
-        yield repo
+    Base.metadata.create_all(repo._engine)
+    yield repo
 
 
 # Strong password that passes all validation requirements
@@ -323,7 +320,9 @@ class TestSetUserActive:
 
     def test_set_user_active_not_found_returns_false(self, in_memory_user_repository):
         """set_user_active should return False for non-existent user."""
-        result = in_memory_user_repository.set_user_active(uuid.uuid4(), is_active=False)
+        result = in_memory_user_repository.set_user_active(
+            uuid.uuid4(), is_active=False
+        )
         assert result is False
 
 

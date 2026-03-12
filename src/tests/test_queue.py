@@ -213,7 +213,6 @@ class TestQueueClientOperations:
         result = mock_queue_client.get_exception("nonexistent-job")
         assert result is None
 
-
     def test_enqueue_submits_job_to_correct_queue(self, mock_queue_client):
         """enqueue() should call RQ queue.enqueue with process_job and the job_id."""
         mock_process_job = MagicMock()
