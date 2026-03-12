@@ -13,10 +13,15 @@ from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field, ConfigDict
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+from starlette.responses import JSONResponse as StarletteJSONResponse
 
 from homelab_subs.server.settings import get_settings, Settings
 from homelab_subs.server.models import JobStatus, JobType
@@ -358,6 +363,18 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+    # Add rate limiting
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_middleware(SlowAPIMiddleware)
+
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_handler(request, exc):
+        return StarletteJSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Try again later."},
+        )
 
     return app
 
@@ -883,7 +900,8 @@ async def check_setup_status():
 
 
 @app.post("/auth/register", response_model=TokenResponse, tags=["Authentication"])
-async def register_user(request: RegisterRequest):
+@app.state.limiter.limit("3/minute")
+async def register_user(request: Request, body: RegisterRequest):
     """
     Register a new user (first-time setup only).
 
@@ -907,8 +925,8 @@ async def register_user(request: RegisterRequest):
 
         # Create the admin user
         user = user_repo.create_user(
-            username=request.username,
-            password=request.password,
+            username=body.username,
+            password=body.password,
             is_admin=True,
         )
 
@@ -938,7 +956,8 @@ async def register_user(request: RegisterRequest):
 
 
 @app.post("/auth/login", response_model=TokenResponse, tags=["Authentication"])
-async def login(request: LoginRequest):
+@app.state.limiter.limit("5/minute")
+async def login(request: Request, body: LoginRequest):
     """
     Authenticate and receive access tokens.
 
@@ -950,8 +969,8 @@ async def login(request: LoginRequest):
         user_repo = get_user_repository()
 
         user = user_repo.authenticate(
-            username=request.username,
-            password=request.password,
+            username=body.username,
+            password=body.password,
         )
 
         if user is None:
