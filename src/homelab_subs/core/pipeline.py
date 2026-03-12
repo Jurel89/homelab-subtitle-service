@@ -396,6 +396,8 @@ class PipelineRunner:
         if self._metrics_thread and self._metrics_thread.is_alive():
             self._stop_monitoring.set()
             self._metrics_thread.join(timeout=5)
+        if self.monitor is not None:
+            self.monitor.close()
 
     def _get_performance_summary(self) -> dict:
         if not self.monitor or not self._collected_metrics:

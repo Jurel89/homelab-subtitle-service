@@ -117,13 +117,19 @@ class PerformanceMonitor:
         except (AttributeError, psutil.AccessDenied):
             self._initial_disk_io = None
 
-    def __del__(self):
-        """Cleanup GPU monitoring on destruction."""
+    def close(self):
+        """Release NVML handle."""
         if self._gpu_initialized:
             try:
                 pynvml.nvmlShutdown()
-            except Exception:  # nosec B110 - Intentionally silent cleanup in destructor
-                pass  # Cleanup errors are non-critical during object destruction
+            except Exception:
+                pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
 
     def get_metrics(self) -> SystemMetrics:
         """
