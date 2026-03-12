@@ -92,7 +92,7 @@ class JobContext:
 
     def update_stage(self, stage: JobStage, progress: int = 0):
         """Update job stage and progress."""
-        self.job.stage = stage
+        self.job.current_stage = stage
         self.job.progress = progress
         self.session.commit()
         logger.info(f"Job {self.job_id}: stage={stage.value}, progress={progress}%")
@@ -116,7 +116,7 @@ class JobContext:
     def complete(self, output_path: Optional[str] = None):
         """Mark job as completed."""
         self.job.status = JobStatus.DONE
-        self.job.stage = JobStage.COMPLETED
+        self.job.current_stage = JobStage.COMPLETED
         self.job.progress = 100
         if output_path:
             self.job.output_path = output_path
@@ -208,7 +208,7 @@ def _process_transcription(ctx: JobContext) -> dict:
 
     Stages: EXTRACTING_AUDIO -> TRANSCRIBING -> GENERATING_SRT
     """
-    input_path = Path(ctx.job.input_path)
+    input_path = Path(ctx.job.source_path)
     output_path = (
         Path(ctx.job.output_path)
         if ctx.job.output_path
@@ -217,7 +217,7 @@ def _process_transcription(ctx: JobContext) -> dict:
 
     # Get options from job
     options = ctx.job.options or {}
-    model_size = ctx.job.model_size or "base"
+    model_size = ctx.job.model_name or "base"
     compute_type = ctx.job.compute_type or "float16"
 
     # Stage 1: Extract audio (if video file)
@@ -258,7 +258,7 @@ def _process_transcription(ctx: JobContext) -> dict:
             ctx.update_progress(pct)
 
     # Transcribe
-    source_language = ctx.job.source_language
+    source_language = ctx.job.language
     segments = transcriber.transcribe(
         str(audio_path),
         language=source_language,
@@ -291,7 +291,7 @@ def _process_translation(ctx: JobContext) -> dict:
     Takes an existing SRT file and translates it.
     Stages: TRANSLATING -> GENERATING_SRT
     """
-    input_path = Path(ctx.job.input_path)
+    input_path = Path(ctx.job.source_path)
     output_path = (
         Path(ctx.job.output_path)
         if ctx.job.output_path
@@ -299,7 +299,7 @@ def _process_translation(ctx: JobContext) -> dict:
     )
 
     options = ctx.job.options or {}
-    source_lang = ctx.job.source_language or "auto"
+    source_lang = ctx.job.language or "auto"
     target_lang = ctx.job.target_language
 
     if not target_lang:
@@ -351,8 +351,8 @@ def _process_sync(ctx: JobContext) -> dict:
     Synchronizes subtitles with audio.
     Stages: EXTRACTING_AUDIO -> SYNCING -> GENERATING_SRT
     """
-    input_path = Path(ctx.job.input_path)
-    reference_path = Path(ctx.job.reference_path) if ctx.job.reference_path else None
+    input_path = Path(ctx.job.source_path)
+    reference_path = Path(ctx.job.subtitle_path) if ctx.job.subtitle_path else None
     output_path = (
         Path(ctx.job.output_path)
         if ctx.job.output_path
@@ -426,8 +426,8 @@ def _process_comparison(ctx: JobContext) -> dict:
     Compares two SRT files and generates accuracy metrics.
     Stages: COMPARING
     """
-    input_path = Path(ctx.job.input_path)  # Reference (human) subtitles
-    reference_path = Path(ctx.job.reference_path)  # Hypothesis (machine) subtitles
+    input_path = Path(ctx.job.source_path)  # Reference (human) subtitles
+    reference_path = Path(ctx.job.subtitle_path)  # Hypothesis (machine) subtitles
     output_path = (
         Path(ctx.job.output_path)
         if ctx.job.output_path
