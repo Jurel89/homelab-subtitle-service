@@ -911,6 +911,7 @@ async def register_user(request: Request, body: RegisterRequest):
     from homelab_subs.server.auth import (
         create_token_pair,
         PasswordValidationError,
+        validate_password_strength,
     )
 
     try:
@@ -922,6 +923,11 @@ async def register_user(request: Request, body: RegisterRequest):
                 status_code=403,
                 detail="Registration not allowed. Users already exist.",
             )
+
+        # Validate password strength
+        password_errors = validate_password_strength(body.password)
+        if password_errors:
+            raise HTTPException(status_code=400, detail={"errors": password_errors})
 
         # Create the admin user
         user = user_repo.create_user(
@@ -1101,7 +1107,7 @@ async def change_password(
 
     Requires authentication with the current password.
     """
-    from homelab_subs.server.auth import verify_password, hash_password
+    from homelab_subs.server.auth import verify_password, hash_password, validate_password_strength
 
     try:
         user_repo = get_user_repository()
@@ -1113,6 +1119,11 @@ async def change_password(
         # Verify current password
         if not verify_password(request.current_password, user.password_hash):
             raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+        # Validate new password strength
+        password_errors = validate_password_strength(request.new_password)
+        if password_errors:
+            raise HTTPException(status_code=400, detail={"errors": password_errors})
 
         # Update password
         user_repo.update_password(current_user.user_id, hash_password(request.new_password))

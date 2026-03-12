@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
@@ -395,42 +396,45 @@ class PasswordValidationError(Exception):
     pass
 
 
-def validate_password_strength(password: str) -> None:
+def validate_password_strength(password: str) -> list[str]:
     """
     Validate password meets security requirements.
 
     Requirements:
-    - Minimum 8 characters
+    - Minimum 12 characters
     - At least one uppercase letter
     - At least one lowercase letter
     - At least one digit
+    - At least one special character
 
     Parameters
     ----------
     password : str
         Password to validate.
 
-    Raises
-    ------
-    PasswordValidationError
-        If password doesn't meet requirements.
+    Returns
+    -------
+    list[str]
+        List of validation error messages. Empty list means password is valid.
     """
     errors = []
 
-    if len(password) < 8:
-        errors.append("Password must be at least 8 characters long")
+    if len(password) < 12:
+        errors.append("Password must be at least 12 characters long")
 
-    if not any(c.isupper() for c in password):
+    if not re.search(r"[A-Z]", password):
         errors.append("Password must contain at least one uppercase letter")
 
-    if not any(c.islower() for c in password):
+    if not re.search(r"[a-z]", password):
         errors.append("Password must contain at least one lowercase letter")
 
-    if not any(c.isdigit() for c in password):
+    if not re.search(r"\d", password):
         errors.append("Password must contain at least one digit")
 
-    if errors:
-        raise PasswordValidationError("; ".join(errors))
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>_\-+=\[\]\\;'/`~]", password):
+        errors.append("Password must contain at least one special character")
+
+    return errors
 
 
 # =============================================================================
