@@ -146,7 +146,7 @@ class TestJobContextMethods:
                     ctx.session = MagicMock()
                     ctx.job = MagicMock()
                     ctx.job.status = JobStatus.RUNNING
-                    ctx.job.stage = JobStage.INITIALIZING
+                    ctx.job.current_stage = JobStage.INITIALIZING
                     ctx.job.progress = 0
                     ctx.job.logs = None
 
@@ -164,7 +164,7 @@ class TestJobContextMethods:
         """check_cancelled should return True for cancelled job."""
         from homelab_subs.server.models import JobStatus
 
-        mock_context.job.status = JobStatus.CANCELLED
+        mock_context.job.status = JobStatus.CANCELED
         result = mock_context.check_cancelled()
         assert result is True
 
@@ -173,7 +173,7 @@ class TestJobContextMethods:
         from homelab_subs.server.worker import JobCancelledException
         from homelab_subs.server.models import JobStatus
 
-        mock_context.job.status = JobStatus.CANCELLED
+        mock_context.job.status = JobStatus.CANCELED
 
         with pytest.raises(JobCancelledException):
             mock_context.raise_if_cancelled()
@@ -192,7 +192,7 @@ class TestJobContextMethods:
 
         mock_context.update_stage(JobStage.TRANSCRIBING, progress=25)
 
-        assert mock_context.job.stage == JobStage.TRANSCRIBING
+        assert mock_context.job.current_stage == JobStage.TRANSCRIBING
         assert mock_context.job.progress == 25
         mock_context.session.commit.assert_called()
 
@@ -233,8 +233,8 @@ class TestJobContextMethods:
 
         mock_context.complete(output_path="/output/test.srt")
 
-        assert mock_context.job.status == JobStatus.COMPLETED
-        assert mock_context.job.stage == JobStage.COMPLETED
+        assert mock_context.job.status == JobStatus.DONE
+        assert mock_context.job.current_stage == JobStage.COMPLETED
         assert mock_context.job.progress == 100
         assert mock_context.job.output_path == "/output/test.srt"
 
