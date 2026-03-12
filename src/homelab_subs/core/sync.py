@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .audio import FFmpeg
+from .text_utils import normalize_text, format_timestamp
 from .transcription import Segment, Transcriber, TranscriberConfig
 from ..logging_config import get_logger, log_stage
 
@@ -136,59 +137,9 @@ def _timestamp_to_seconds(timestamp: str) -> float:
     return hours * 3600 + minutes * 60 + seconds + ms / 1000
 
 
-def _seconds_to_timestamp(seconds: float) -> str:
-    """
-    Convert seconds to SRT timestamp format (HH:MM:SS,mmm).
-
-    Parameters
-    ----------
-    seconds : float
-        Time in seconds.
-
-    Returns
-    -------
-    str
-        Timestamp in SRT format.
-    """
-    if seconds < 0:
-        seconds = 0.0
-
-    total_ms = int(round(seconds * 1000))
-    hours = total_ms // (3600 * 1000)
-    total_ms %= 3600 * 1000
-    minutes = total_ms // (60 * 1000)
-    total_ms %= 60 * 1000
-    secs = total_ms // 1000
-    ms = total_ms % 1000
-
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
-
-
-def _normalize_text(text: str) -> str:
-    """
-    Normalize text for comparison by removing punctuation and extra whitespace.
-
-    Parameters
-    ----------
-    text : str
-        Original text.
-
-    Returns
-    -------
-    str
-        Normalized lowercase text.
-    """
-    # Remove common subtitle formatting tags
-    text = re.sub(r"<[^>]+>", "", text)  # HTML-like tags
-    text = re.sub(r"\{[^}]+\}", "", text)  # ASS-style tags
-
-    # Remove punctuation except apostrophes (important for contractions)
-    text = re.sub(r"[^\w\s']", " ", text)
-
-    # Normalize whitespace and lowercase
-    text = " ".join(text.lower().split())
-
-    return text
+# Backwards-compatible aliases for the canonical implementations in text_utils.
+_seconds_to_timestamp = format_timestamp
+_normalize_text = normalize_text
 
 
 def _text_similarity(text1: str, text2: str) -> float:
