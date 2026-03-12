@@ -8,6 +8,7 @@ including job creation, status queries, cancellation, and retry operations.
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
@@ -281,12 +282,16 @@ def get_settings_dep() -> Settings:
     return get_settings()
 
 
-async def get_job_service(
-    settings: Settings = Depends(get_settings_dep),
-) -> ServerJobService:
+@lru_cache(maxsize=1)
+def _create_job_service() -> ServerJobService:
+    """Create a cached ServerJobService instance to avoid connection pool leaks."""
+    settings = get_settings()
+    return ServerJobService(settings)
+
+
+async def get_job_service() -> ServerJobService:
     """Dependency for job service."""
-    service = ServerJobService(settings)
-    return service
+    return _create_job_service()
 
 
 # User and settings repositories - lazy loaded
