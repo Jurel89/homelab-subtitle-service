@@ -167,13 +167,14 @@ def test_update_job(temp_db):
     db_logger.create_job(job)
 
     # Update job
-    job.status = "completed"
-    job.completed_at = datetime.now()
-    job.duration_seconds = 120.5
-    job.cpu_avg = 45.5
-    job.output_path = "/path/to/output.srt"
-
-    db_logger.update_job(job)
+    db_logger.update_job(
+        job.job_id,
+        status="completed",
+        completed_at=datetime.now(),
+        duration_seconds=120.5,
+        performance_summary={"cpu_avg": 45.5},
+        output_path="/path/to/output.srt",
+    )
 
     # Verify updates
     retrieved_job = db_logger.get_job("test-123")
@@ -574,7 +575,7 @@ def test_update_nonexistent_job(temp_db):
     )
 
     # Update should not raise an error (may be a no-op)
-    db_logger.update_job(job)
+    db_logger.update_job(job.job_id, status="completed")
 
     # Job should still not exist
     retrieved = db_logger.get_job("nonexistent")

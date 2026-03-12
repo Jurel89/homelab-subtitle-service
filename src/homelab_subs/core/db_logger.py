@@ -186,8 +186,6 @@ class DatabaseLogger:
             if "device" not in columns:
                 cursor.execute("ALTER TABLE jobs ADD COLUMN device TEXT")
 
-            conn.commit()
-
     def create_job(self, job: JobLog) -> int:
         """
         Create a new job log entry.
@@ -238,7 +236,7 @@ class DatabaseLogger:
 
     def update_job(
         self,
-        job_id: JobLog | str,
+        job_id: str,
         *,
         status: Optional[str] = None,
         completed_at: Optional[datetime] = None,
@@ -269,46 +267,6 @@ class DatabaseLogger:
         performance_summary : dict, optional
             Performance metrics summary
         """
-        job_obj: Optional[JobLog] = None
-        if isinstance(job_id, JobLog):
-            job_obj = job_id
-            job_id = job_obj.job_id
-
-            status = status if status is not None else job_obj.status
-            completed_at = (
-                completed_at if completed_at is not None else job_obj.completed_at
-            )
-            error_message = (
-                error_message if error_message is not None else job_obj.error_message
-            )
-            duration_seconds = (
-                duration_seconds
-                if duration_seconds is not None
-                else job_obj.duration_seconds
-            )
-            output_path = (
-                output_path if output_path is not None else job_obj.output_path
-            )
-            language = language if language is not None else job_obj.language
-            model = model if model is not None else job_obj.model
-            task = task if task is not None else job_obj.task
-            device = device if device is not None else job_obj.device
-
-            if performance_summary is None:
-                performance_summary = {}
-                if job_obj.cpu_avg is not None:
-                    performance_summary["cpu_avg"] = job_obj.cpu_avg
-                if job_obj.cpu_max is not None:
-                    performance_summary["cpu_max"] = job_obj.cpu_max
-                if job_obj.memory_avg_mb is not None:
-                    performance_summary["memory_avg_mb"] = job_obj.memory_avg_mb
-                if job_obj.memory_max_mb is not None:
-                    performance_summary["memory_max_mb"] = job_obj.memory_max_mb
-                if job_obj.gpu_avg is not None:
-                    performance_summary["gpu_avg"] = job_obj.gpu_avg
-                if job_obj.gpu_max is not None:
-                    performance_summary["gpu_max"] = job_obj.gpu_max
-
         updates = []
         values = []
 
