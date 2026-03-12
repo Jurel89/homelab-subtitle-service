@@ -231,9 +231,13 @@ class TestQueueClientOperations:
                 rq_id = mock_queue_client.enqueue("test-job-id", priority="high")
 
         high_queue.enqueue.assert_called_once()
-        call_kwargs = high_queue.enqueue.call_args
-        assert call_kwargs.args[0] is mock_process_job
-        assert call_kwargs.kwargs["job_id"] == "subsvc:test-job-id"
+        call_args = high_queue.enqueue.call_args
+        # First positional arg is the worker function
+        assert call_args.args[0] is mock_process_job
+        # Second positional arg is the DB job ID passed to process_job
+        assert call_args.args[1] == "test-job-id"
+        # RQ job_id kwarg sets the RQ job ID (not passed to worker function)
+        assert call_args.kwargs["job_id"] == "subsvc:test-job-id"
         assert rq_id == "subsvc:test-job-id"
 
 

@@ -21,12 +21,22 @@ logger = get_logger(__name__)
 
 
 @lru_cache(maxsize=4)
+def _cached_engine(database_url: str, echo: bool = False) -> Engine:
+    """Cached engine factory for production database URLs."""
+    return create_engine(
+        database_url,
+        echo=echo,
+        pool_pre_ping=True,
+    )
+
+
 def get_engine(database_url: str, echo: bool = False) -> Engine:
     """
     Get or create a shared SQLAlchemy engine for the given database URL.
 
     Uses lru_cache so that repositories sharing the same URL and echo
-    setting will reuse the same engine instance.
+    setting will reuse the same engine instance. In-memory SQLite URLs
+    bypass the cache to avoid cross-test data leakage.
 
     Parameters
     ----------
@@ -40,11 +50,9 @@ def get_engine(database_url: str, echo: bool = False) -> Engine:
     Engine
         SQLAlchemy engine instance.
     """
-    return create_engine(
-        database_url,
-        echo=echo,
-        pool_pre_ping=True,
-    )
+    if ":memory:" in database_url:
+        return create_engine(database_url, echo=echo, pool_pre_ping=True)
+    return _cached_engine(database_url, echo=echo)
 
 
 class BaseRepository:

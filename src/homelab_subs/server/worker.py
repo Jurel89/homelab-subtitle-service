@@ -232,7 +232,8 @@ def _process_transcription(ctx: JobContext) -> dict:
     # Check if input is video (needs audio extraction) or already audio
     video_extensions = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
     if input_path.suffix.lower() in video_extensions:
-        audio_path = ffmpeg.extract_audio_to_wav(input_path)
+        audio_temp = ctx.create_temp_file(suffix=".wav")
+        audio_path = ffmpeg.extract_audio_to_wav(input_path, output_path=audio_temp)
         ctx.add_log("Audio extracted to temporary file")
     else:
         # Assume it's already an audio file
