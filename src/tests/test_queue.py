@@ -214,6 +214,30 @@ class TestQueueClientOperations:
         assert result is None
 
 
+    def test_enqueue_submits_job_to_correct_queue(self, mock_queue_client):
+        """enqueue() should call RQ queue.enqueue with process_job and the job_id."""
+        mock_process_job = MagicMock()
+        mock_rq_job = MagicMock()
+        mock_rq_job.id = "subsvc:test-job-id"
+
+        high_queue = mock_queue_client._queues["high"]
+        high_queue.enqueue.return_value = mock_rq_job
+
+        with patch(
+            "homelab_subs.server.worker.process_job", mock_process_job, create=True
+        ):
+            with patch(
+                "homelab_subs.server.queue.Queue",
+            ):
+                rq_id = mock_queue_client.enqueue("test-job-id", priority="high")
+
+        high_queue.enqueue.assert_called_once()
+        call_kwargs = high_queue.enqueue.call_args
+        assert call_kwargs.args[0] is mock_process_job
+        assert call_kwargs.kwargs["job_id"] == "subsvc:test-job-id"
+        assert rq_id == "subsvc:test-job-id"
+
+
 class TestQueueStats:
     """Tests for queue statistics."""
 
