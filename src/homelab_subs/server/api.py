@@ -21,6 +21,11 @@ from pydantic import BaseModel, Field, ConfigDict
 from homelab_subs.server.settings import get_settings, Settings
 from homelab_subs.server.models import JobStatus, JobType
 from homelab_subs.server.job_service import ServerJobService
+from homelab_subs.server.auth import (
+    get_current_user,
+    get_current_admin_user,
+    TokenData,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -441,6 +446,7 @@ async def get_queue_status(service: ServerJobService = Depends(get_job_service))
 )
 async def create_job(
     request: JobCreateRequest,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -511,6 +517,7 @@ async def list_jobs(
     ),
     page: int = Query(default=1, ge=1, description="Page number"),
     page_size: int = Query(default=20, ge=1, le=100, description="Items per page"),
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -548,6 +555,7 @@ async def list_jobs(
 )
 async def get_job(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -570,6 +578,7 @@ async def get_job(
 )
 async def get_job_logs(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -599,6 +608,7 @@ async def get_job_logs(
 )
 async def download_output(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -652,6 +662,7 @@ async def download_output(
 )
 async def cancel_job(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -680,6 +691,7 @@ async def cancel_job(
 )
 async def retry_job(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -707,6 +719,7 @@ async def retry_job(
 )
 async def delete_job(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -742,6 +755,7 @@ async def delete_job(
 )
 async def create_batch_jobs(
     requests: list[JobCreateRequest],
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -991,35 +1005,68 @@ async def refresh_token(request: RefreshRequest):
 
 
 @app.get("/auth/me", response_model=UserResponse, tags=["Authentication"])
-async def get_current_user_info():
+async def get_current_user_info(
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Get current user information.
 
     Requires authentication.
     """
+    try:
+        user_repo = get_user_repository()
+        user = user_repo.get_user_by_id(current_user.user_id)
 
-    # Get credentials from header
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    # Note: This is a simplified version. In production, use proper dependency
-    # For now, we return the authenticated user's info
-    raise HTTPException(
-        status_code=501,
-        detail="Use Authorization header with Bearer token",
-    )
+        return UserResponse(
+            id=user.id,
+            username=user.username,
+            is_admin=user.is_admin,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            last_login=user.last_login,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user info: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user info")
 
 
 @app.post("/auth/change-password", tags=["Authentication"])
-async def change_password(request: ChangePasswordRequest):
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Change the current user's password.
 
     Requires authentication with the current password.
     """
-    # This endpoint needs to be protected and verify current password
-    raise HTTPException(
-        status_code=501,
-        detail="Endpoint not yet implemented - requires auth dependency",
-    )
+    from homelab_subs.server.auth import verify_password, hash_password
+
+    try:
+        user_repo = get_user_repository()
+        user = user_repo.get_user_by_id(current_user.user_id)
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Verify current password
+        if not verify_password(request.current_password, user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+        # Update password
+        user_repo.update_password(current_user.user_id, hash_password(request.new_password))
+
+        return {"detail": "Password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to change password: {e}")
+        raise HTTPException(status_code=500, detail="Failed to change password")
 
 
 # =============================================================================
@@ -1028,11 +1075,13 @@ async def change_password(request: ChangePasswordRequest):
 
 
 @app.get("/settings", response_model=SettingsResponse, tags=["Settings"])
-async def get_global_settings():
+async def get_global_settings(
+    current_user: TokenData = Depends(get_current_admin_user),
+):
     """
     Get current global settings.
 
-    Note: In production, this should require authentication.
+    Requires admin authentication.
     """
     try:
         settings_repo = get_settings_repository()
@@ -1057,11 +1106,14 @@ async def get_global_settings():
 
 
 @app.put("/settings", response_model=SettingsResponse, tags=["Settings"])
-async def update_global_settings(request: SettingsUpdateRequest):
+async def update_global_settings(
+    request: SettingsUpdateRequest,
+    current_user: TokenData = Depends(get_current_admin_user),
+):
     """
     Update global settings.
 
-    Note: In production, this should require admin authentication.
+    Requires admin authentication.
     """
     try:
         settings_repo = get_settings_repository()
@@ -1112,6 +1164,7 @@ async def browse_files(
         default=False,
         description="Whether to show hidden files (starting with .)",
     ),
+    current_user: TokenData = Depends(get_current_user),
 ):
     """
     Browse files and directories within configured media folders.
@@ -1119,7 +1172,7 @@ async def browse_files(
     Security: Only allows browsing within configured media_folders.
     Cannot escape to parent directories outside allowed paths.
 
-    Note: In production, this should require authentication.
+    Requires authentication.
     """
     from datetime import datetime
 
