@@ -197,8 +197,9 @@ def process_job(job_id: str) -> dict:
             return {"status": "cancelled", "job_id": job_id}
 
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            ctx.fail(error_msg)
+            logger.error(f"Job {ctx.job_id} failed: {traceback.format_exc()}")
+            user_error = f"{type(e).__name__}: {str(e)}"
+            ctx.fail(user_error)
             raise
 
 
