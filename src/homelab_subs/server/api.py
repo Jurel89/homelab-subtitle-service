@@ -619,8 +619,8 @@ async def get_job_logs(
     return JobLogsResponse(
         job_id=job_id,
         logs=job.logs,
-        status=job.status.value if hasattr(job.status, "value") else str(job.status),
-        stage=job.stage.value if hasattr(job.stage, "value") else str(job.stage),
+        status=job.status.value,
+        stage=job.stage.value if job.stage else None,
     )
 
 
@@ -856,9 +856,9 @@ def _job_to_response(job) -> JobResponse:
     """Convert a Job model to a JobResponse."""
     return JobResponse(
         id=job.id,
-        type=job.type.value if hasattr(job.type, "value") else str(job.type),
-        status=job.status.value if hasattr(job.status, "value") else str(job.status),
-        stage=job.stage.value if hasattr(job.stage, "value") else str(job.stage),
+        type=job.type.value,
+        status=job.status.value,
+        stage=job.stage.value if job.stage else None,
         progress=job.progress,
         input_path=job.input_path,
         output_path=job.output_path,
@@ -1267,8 +1267,6 @@ async def browse_files(
 
     Requires authentication.
     """
-    from datetime import datetime
-
     try:
         settings_repo = get_settings_repository()
         settings = settings_repo.get_settings()
