@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import uuid
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,7 +11,7 @@ import yaml
 
 from .core.audio import FFmpegError
 from .core.transcription import TranscriptionTask
-from .logging_config import setup_logging, get_logger, log_file_info
+from .logging_config import setup_logging, get_logger
 from .services.job_service import JobService
 
 logger = get_logger(__name__)

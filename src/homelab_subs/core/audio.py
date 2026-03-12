@@ -269,7 +269,3 @@ class FFmpeg:
         )
 
         return output_path
-
-
-# A convenient default instance for most of the codebase to use
-default_ffmpeg = FFmpeg()
