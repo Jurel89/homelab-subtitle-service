@@ -26,7 +26,7 @@ from .text_utils import (
     format_timestamp,
     SubtitleCue,
     parse_srt_content,
-    _timestamp_to_seconds,
+    _timestamp_to_seconds,  # noqa: F401  # re-exported for backward compat
 )
 from .transcription import Segment, Transcriber, TranscriberConfig
 from ..logging_config import get_logger, log_stage

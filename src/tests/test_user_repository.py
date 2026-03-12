@@ -27,7 +27,7 @@ except ImportError:
 try:
     from homelab_subs.server.models import (
         Base,  # noqa: F401
-        User,
+        User,  # noqa: F401
         SQLALCHEMY_AVAILABLE as MODELS_AVAILABLE,
     )
 except ImportError:

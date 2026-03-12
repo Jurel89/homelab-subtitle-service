@@ -697,7 +697,9 @@ class UserRepository(BaseRepository):
         from .auth import hash_password, validate_password_strength
 
         # Validate password strength
-        validate_password_strength(password)
+        password_errors = validate_password_strength(password)
+        if password_errors:
+            raise ValueError(f"Password too weak: {'; '.join(password_errors)}")
 
         with self.session() as session:
             if is_admin and self.has_any_users():

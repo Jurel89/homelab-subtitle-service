@@ -511,7 +511,7 @@ async def create_job(
         _validate_path_in_media_folders(Path(request.output_path).parent)
 
     # Validate reference path for jobs that need it
-    if request.type in [JobType.SYNC, JobType.COMPARE]:
+    if request.type in [JobType.SYNC_SUBTITLE, JobType.COMPARE]:
         if not request.reference_path:
             raise HTTPException(
                 status_code=400,
@@ -632,9 +632,9 @@ async def get_job_logs(
 
     return JobLogsResponse(
         job_id=job_id,
-        logs=job.logs,
+        logs=job.error_message,
         status=job.status.value,
-        stage=job.stage.value if job.stage else None,
+        stage=job.current_stage.value,
     )
 
 
@@ -872,20 +872,20 @@ def _job_to_response(job) -> JobResponse:
         id=job.id,
         type=job.type.value,
         status=job.status.value,
-        stage=job.stage.value if job.stage else None,
+        stage=job.current_stage.value,
         progress=job.progress,
-        input_path=job.input_path,
+        input_path=job.source_path,
         output_path=job.output_path,
-        reference_path=job.reference_path,
-        source_language=job.source_language,
+        reference_path=job.subtitle_path,
+        source_language=job.language,
         target_language=job.target_language,
-        model_size=job.model_size,
+        model_size=job.model_name,
         compute_type=job.compute_type,
         error_message=job.error_message,
         created_at=job.created_at,
-        updated_at=job.updated_at,
+        updated_at=job.created_at,
         started_at=job.started_at,
-        completed_at=job.completed_at,
+        completed_at=job.finished_at,
     )
 
 
@@ -1127,7 +1127,7 @@ async def change_password(
 
     Requires authentication with the current password.
     """
-    from homelab_subs.server.auth import verify_password, hash_password, validate_password_strength
+    from homelab_subs.server.auth import verify_password, validate_password_strength
 
     try:
         user_repo = get_user_repository()
@@ -1146,7 +1146,7 @@ async def change_password(
             raise HTTPException(status_code=400, detail={"errors": password_errors})
 
         # Update password
-        user_repo.update_password(current_user.user_id, hash_password(request.new_password))
+        user_repo.update_password(current_user.user_id, request.new_password)
 
         # Revoke all existing tokens by incrementing token version
         user_repo.increment_token_version(current_user.user_id)

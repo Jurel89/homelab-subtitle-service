@@ -9,14 +9,15 @@ from typing import Any, Optional
 from tqdm import tqdm
 import yaml
 
+import uuid
+from importlib.metadata import version as _pkg_version
+
 from .core.audio import FFmpegError
 from .core.transcription import TranscriptionTask
-from .logging_config import setup_logging, get_logger
+from .logging_config import setup_logging, get_logger, log_file_info
 from .services.job_service import JobService
 
 logger = get_logger(__name__)
-
-from importlib.metadata import version as _pkg_version
 try:
     __version__ = _pkg_version("homelab-subtitle-service")
 except Exception:

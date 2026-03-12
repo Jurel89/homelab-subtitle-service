@@ -23,8 +23,8 @@ from homelab_subs.server.models import Job, JobStatus, JobStage, JobType
 from homelab_subs.core.audio import FFmpeg
 from homelab_subs.core.transcription import Transcriber, TranscriberConfig
 from homelab_subs.core.translation import Translator, TranslatorConfig
-from homelab_subs.core.srt import segments_to_srt, write_srt_file
-from homelab_subs.core.sync import SubtitleSyncer, parse_srt_content
+from homelab_subs.core.srt import write_srt_file
+from homelab_subs.core.sync import SubtitleSyncer
 from homelab_subs.core.comparison import SubtitleComparator
 
 logger = logging.getLogger(__name__)

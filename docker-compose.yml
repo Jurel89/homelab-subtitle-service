@@ -1,6 +1,8 @@
 services:
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: DockerFile
     command: ["python", "-m", "uvicorn", "homelab_subs.server.api:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"
@@ -14,7 +16,9 @@ services:
       - media:/media
 
   worker:
-    build: .
+    build:
+      context: .
+      dockerfile: DockerFile
     command: ["python", "-m", "homelab_subs.server.worker"]
     env_file: .env
     depends_on:
