@@ -251,7 +251,7 @@ class JobRepository:
         offset: int = 0,
         order_by: str = "created_at",
         order_desc: bool = True,
-    ) -> Sequence[Job]:
+    ) -> tuple[Sequence[Job], int]:
         """
         List jobs with optional filtering.
 
@@ -272,13 +272,11 @@ class JobRepository:
 
         Returns
         -------
-        Sequence[Job]
-            List of matching jobs.
+        tuple[Sequence[Job], int]
+            List of matching jobs and the total count (before pagination).
         """
         with self.session() as session:
-            query = select(Job)
-
-            # Apply filters
+            # Build filter conditions
             conditions = []
             if status is not None:
                 if isinstance(status, str):
@@ -290,6 +288,14 @@ class JobRepository:
                     job_type = JobType(job_type)
                 conditions.append(Job.type == job_type)
 
+            # Count query (same filters, no pagination)
+            count_query = select(func.count(Job.id))
+            if conditions:
+                count_query = count_query.where(and_(*conditions))
+            total = session.execute(count_query).scalar() or 0
+
+            # Main query
+            query = select(Job)
             if conditions:
                 query = query.where(and_(*conditions))
 
@@ -307,7 +313,7 @@ class JobRepository:
             for job in jobs:
                 session.expunge(job)
 
-            return jobs
+            return jobs, total
 
     def update_status(
         self,
