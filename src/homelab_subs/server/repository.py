@@ -300,7 +300,10 @@ class JobRepository:
                 query = query.where(and_(*conditions))
 
             # Apply ordering
-            order_column = getattr(Job, order_by, Job.created_at)
+            VALID_ORDER_FIELDS = {"created_at", "started_at", "finished_at", "status", "priority", "type"}
+            if order_by not in VALID_ORDER_FIELDS:
+                order_by = "created_at"
+            order_column = getattr(Job, order_by)
             if order_desc:
                 query = query.order_by(desc(order_column))
             else:
