@@ -10,19 +10,18 @@ on jobs and related entities.
 from __future__ import annotations
 
 import uuid
-from contextlib import contextmanager
 from datetime import datetime
-from typing import Any, Generator, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 try:
-    from sqlalchemy import create_engine, select, desc, and_
+    from sqlalchemy import select, desc, and_
     from sqlalchemy.exc import IntegrityError
-    from sqlalchemy.orm import Session, sessionmaker
 
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
 
+from .base_repository import BaseRepository
 from .models import (
     Base,
     Job,
@@ -35,13 +34,13 @@ from .models import (
     GlobalSettings,
     SQLALCHEMY_AVAILABLE as MODELS_AVAILABLE,
 )
-from .settings import Settings, get_settings
+from .settings import Settings
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
 
 
-class JobRepository:
+class JobRepository(BaseRepository):
     """
     Repository for managing Job entities in PostgreSQL.
 
@@ -77,21 +76,13 @@ class JobRepository:
         database_url: Optional[str] = None,
         settings: Optional[Settings] = None,
     ) -> None:
-        if not SQLALCHEMY_AVAILABLE or not MODELS_AVAILABLE:
+        if not MODELS_AVAILABLE:
             raise RuntimeError(
                 "SQLAlchemy is required for JobRepository. "
                 "Install with: pip install homelab-subtitle-service[server]"
             )
 
-        self._settings = settings or get_settings()
-        self._database_url = database_url or self._settings.database_url
-
-        self._engine = create_engine(
-            self._database_url,
-            echo=self._settings.log_level == "DEBUG",
-            pool_pre_ping=True,  # Check connection health
-        )
-        self._session_factory = sessionmaker(bind=self._engine)
+        super().__init__(database_url=database_url, settings=settings)
 
         logger.info(
             f"JobRepository initialized with database: {self._database_url.split('@')[-1]}"
@@ -106,28 +97,6 @@ class JobRepository:
         """Drop all database tables. Use with caution!"""
         Base.metadata.drop_all(self._engine)
         logger.warning("Database tables dropped")
-
-    @contextmanager
-    def session(self) -> Generator[Session, None, None]:
-        """
-        Context manager for database sessions.
-
-        Handles commit/rollback automatically.
-
-        Yields
-        ------
-        Session
-            SQLAlchemy session for database operations.
-        """
-        session = self._session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     # =========================================================================
     # Job CRUD Operations
@@ -636,7 +605,7 @@ if SQLALCHEMY_AVAILABLE:
     from sqlalchemy import func
 
 
-class UserRepository:
+class UserRepository(BaseRepository):
     """
     Repository for managing User entities in PostgreSQL.
 
@@ -664,36 +633,15 @@ class UserRepository:
         database_url: Optional[str] = None,
         settings: Optional[Settings] = None,
     ) -> None:
-        if not SQLALCHEMY_AVAILABLE or not MODELS_AVAILABLE:
+        if not MODELS_AVAILABLE:
             raise RuntimeError(
                 "SQLAlchemy is required for UserRepository. "
                 "Install with: pip install homelab-subtitle-service[server]"
             )
 
-        self._settings = settings or get_settings()
-        self._database_url = database_url or self._settings.database_url
-
-        self._engine = create_engine(
-            self._database_url,
-            echo=self._settings.log_level == "DEBUG",
-            pool_pre_ping=True,
-        )
-        self._session_factory = sessionmaker(bind=self._engine)
+        super().__init__(database_url=database_url, settings=settings)
 
         logger.info("UserRepository initialized")
-
-    @contextmanager
-    def session(self) -> Generator[Session, None, None]:
-        """Context manager for database sessions."""
-        session = self._session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     def create_user(
         self,
@@ -903,7 +851,7 @@ class UserRepository:
         logger.info(f"Token version incremented for user {user_id}")
 
 
-class SettingsRepository:
+class SettingsRepository(BaseRepository):
     """
     Repository for managing GlobalSettings in PostgreSQL.
 
@@ -929,36 +877,15 @@ class SettingsRepository:
         database_url: Optional[str] = None,
         settings: Optional[Settings] = None,
     ) -> None:
-        if not SQLALCHEMY_AVAILABLE or not MODELS_AVAILABLE:
+        if not MODELS_AVAILABLE:
             raise RuntimeError(
                 "SQLAlchemy is required for SettingsRepository. "
                 "Install with: pip install homelab-subtitle-service[server]"
             )
 
-        self._settings = settings or get_settings()
-        self._database_url = database_url or self._settings.database_url
-
-        self._engine = create_engine(
-            self._database_url,
-            echo=self._settings.log_level == "DEBUG",
-            pool_pre_ping=True,
-        )
-        self._session_factory = sessionmaker(bind=self._engine)
+        super().__init__(database_url=database_url, settings=settings)
 
         logger.info("SettingsRepository initialized")
-
-    @contextmanager
-    def session(self) -> Generator[Session, None, None]:
-        """Context manager for database sessions."""
-        session = self._session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     def get_settings(self) -> GlobalSettings:
         """
