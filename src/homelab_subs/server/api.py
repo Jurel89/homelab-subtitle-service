@@ -469,6 +469,9 @@ async def create_job(
             status_code=400,
             detail=f"Input file not found: {request.input_path}",
         )
+    _validate_path_in_media_folders(input_path)
+    if request.output_path:
+        _validate_path_in_media_folders(Path(request.output_path).parent)
 
     # Validate reference path for jobs that need it
     if request.type in [JobType.SYNC, JobType.COMPARE]:
@@ -777,6 +780,9 @@ async def create_batch_jobs(
                 status_code=400,
                 detail=f"Job {i}: Input file not found: {req.input_path}",
             )
+        _validate_path_in_media_folders(Path(req.input_path))
+        if req.output_path:
+            _validate_path_in_media_folders(Path(req.output_path).parent)
 
     # Create all jobs
     jobs = []
@@ -801,6 +807,26 @@ async def create_batch_jobs(
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+
+def _validate_path_in_media_folders(path: Path) -> None:
+    """Raise HTTPException(403) if path is not inside a configured media folder."""
+    resolved = path.resolve()
+    settings_repo = get_settings_repository()
+    global_settings = settings_repo.get_settings()
+    media_folders = global_settings.media_folders if global_settings else []
+    if not media_folders:
+        return  # No restrictions configured
+    for folder in media_folders:
+        try:
+            resolved.relative_to(Path(folder).resolve())
+            return
+        except ValueError:
+            continue
+    raise HTTPException(
+        status_code=403,
+        detail=f"Path '{path}' is not within any configured media folder",
+    )
 
 
 def _job_to_response(job) -> JobResponse:
