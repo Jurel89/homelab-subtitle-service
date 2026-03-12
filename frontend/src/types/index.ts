@@ -80,6 +80,9 @@ export interface JobStatistics {
   completed: number;
   failed: number;
   cancelled: number;
+  avg_processing_time_seconds: number | null;
+  jobs_by_type: Record<string, number>;
+  jobs_last_24h: number;
 }
 
 export interface QueueStatus {

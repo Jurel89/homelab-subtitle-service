@@ -10,7 +10,7 @@ on jobs and related entities.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 
 try:
@@ -588,6 +588,26 @@ class JobRepository(BaseRepository):
                 .where(Job.duration_seconds.isnot(None))
             )
 
+            # Average processing time (finished_at - started_at) for completed jobs
+            avg_processing_time = session.scalar(
+                select(func.avg(Job.duration_seconds))
+                .where(Job.status == JobStatus.DONE)
+                .where(Job.started_at.isnot(None))
+                .where(Job.finished_at.isnot(None))
+            )
+
+            # Jobs by type
+            type_rows = session.execute(
+                select(Job.type, func.count(Job.id)).group_by(Job.type)
+            ).all()
+            jobs_by_type = {row[0].value: row[1] for row in type_rows}
+
+            # Jobs created in last 24h
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            jobs_last_24h = session.scalar(
+                select(func.count(Job.id)).where(Job.created_at > cutoff)
+            ) or 0
+
             # Total jobs
             total = sum(status_counts.values())
 
@@ -597,6 +617,9 @@ class JobRepository(BaseRepository):
                 "avg_duration_seconds": float(avg_duration) if avg_duration else None,
                 "pending_count": status_counts.get(JobStatus.PENDING.value, 0),
                 "running_count": status_counts.get(JobStatus.RUNNING.value, 0),
+                "avg_processing_time_seconds": float(avg_processing_time) if avg_processing_time else None,
+                "jobs_by_type": jobs_by_type,
+                "jobs_last_24h": jobs_last_24h,
             }
 
 

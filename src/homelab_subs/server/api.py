@@ -137,6 +137,9 @@ class JobStatisticsResponse(BaseModel):
     completed: int
     failed: int
     cancelled: int
+    avg_processing_time_seconds: Optional[float] = None
+    jobs_by_type: dict[str, int] = Field(default_factory=dict)
+    jobs_last_24h: int = 0
 
 
 class QueueStatusResponse(BaseModel):
@@ -438,10 +441,21 @@ async def get_statistics(service: ServerJobService = Depends(get_job_service)):
     """
     Get job statistics.
 
-    Returns counts of jobs by status.
+    Returns counts of jobs by status along with pre-aggregated KPI data.
     """
-    stats = await service.get_statistics()
-    return JobStatisticsResponse(**stats)
+    stats = service.repository.get_statistics()
+    status_counts = stats.get("status_counts", {})
+    return JobStatisticsResponse(
+        total_jobs=stats.get("total_jobs", 0),
+        pending=status_counts.get("pending", 0),
+        running=status_counts.get("running", 0),
+        completed=status_counts.get("done", 0),
+        failed=status_counts.get("failed", 0),
+        cancelled=status_counts.get("canceled", 0),
+        avg_processing_time_seconds=stats.get("avg_processing_time_seconds"),
+        jobs_by_type=stats.get("jobs_by_type", {}),
+        jobs_last_24h=stats.get("jobs_last_24h", 0),
+    )
 
 
 @app.get("/queue/status", response_model=QueueStatusResponse, tags=["System"])

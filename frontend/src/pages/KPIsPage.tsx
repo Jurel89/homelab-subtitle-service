@@ -12,21 +12,16 @@ import {
   FileVideo,
 } from 'lucide-react';
 import { jobsApi, systemApi } from '@/lib/api';
-import type { Job, JobStatistics, QueueStatus } from '@/types';
+import type { JobStatistics, QueueStatus } from '@/types';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/Card';
 import { Progress } from '@/components/ui/Progress';
 
 export default function KPIsPage() {
-  // Fetch all jobs for statistics
-  const { data: jobsData, isLoading: jobsLoading } = useQuery({
-    queryKey: ['jobs', 'all'],
-    queryFn: () => jobsApi.list({ page: 1, page_size: 1000 }),
-  });
-
-  // Fetch job statistics from API
-  const { data: statsData } = useQuery({
+  // Fetch job statistics from API (includes pre-aggregated KPIs)
+  const { data: statsData, isLoading: statsLoading } = useQuery({
     queryKey: ['stats'],
     queryFn: jobsApi.getStatistics,
+    refetchInterval: 30000,
   });
 
   // Fetch queue status
@@ -36,7 +31,6 @@ export default function KPIsPage() {
     refetchInterval: 10000,
   });
 
-  const jobs: Job[] = jobsData?.jobs || [];
   const stats: JobStatistics = statsData || {
     total_jobs: 0,
     pending: 0,
@@ -44,65 +38,32 @@ export default function KPIsPage() {
     completed: 0,
     failed: 0,
     cancelled: 0,
+    avg_processing_time_seconds: null,
+    jobs_by_type: {},
+    jobs_last_24h: 0,
   };
-  const isLoading = jobsLoading || queueLoading;
+  const isLoading = statsLoading || queueLoading;
 
   // Calculate success rate
   const completedAndFailed = stats.completed + stats.failed;
   const successRate =
     completedAndFailed > 0 ? Math.round((stats.completed / completedAndFailed) * 100) : 0;
 
-  // Calculate average processing time (for completed jobs)
-  const completedJobs = jobs.filter(
-    (j) => j.status === 'done' && j.started_at && j.completed_at
-  );
-  const avgProcessingTime =
-    completedJobs.length > 0
-      ? completedJobs.reduce((acc, job) => {
-          const start = new Date(job.started_at!).getTime();
-          const end = new Date(job.completed_at!).getTime();
-          return acc + (end - start);
-        }, 0) /
-        completedJobs.length /
-        1000 // in seconds
-      : 0;
+  // Use server-side average processing time
+  const avgProcessingTime = stats.avg_processing_time_seconds ?? 0;
 
-  // Calculate jobs by type
-  const jobsByType = jobs.reduce(
-    (acc, job) => {
-      acc[job.type] = (acc[job.type] || 0) + 1;
-      return acc;
-    },
-    {} as Record<string, number>
-  );
+  // Use server-side jobs by type
+  const jobsByType = stats.jobs_by_type;
 
-  // Recent activity (last 24h)
-  const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const recentJobs = jobs.filter((j) => new Date(j.created_at) > last24h);
-  const recentCompleted = recentJobs.filter((j) => j.status === 'done').length;
-  const recentFailed = recentJobs.filter((j) => j.status === 'failed').length;
-
-  // Jobs per hour (last 24h)
-  const jobsPerHour = recentJobs.length / 24;
+  // Use server-side last 24h count; derive per-hour throughput
+  const jobsLast24h = stats.jobs_last_24h;
+  const jobsPerHour = jobsLast24h / 24;
 
   // Format duration
   const formatDuration = (seconds: number): string => {
     if (seconds < 60) return `${Math.round(seconds)}s`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-  };
-
-  // Format relative time
-  const formatRelativeTime = (date: Date): string => {
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMins / 60);
-
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-    return date.toLocaleDateString();
   };
 
   if (isLoading) {
@@ -234,30 +195,22 @@ export default function KPIsPage() {
                   <FileVideo className="h-4 w-4 text-muted-foreground" />
                   <span className="text-sm">Jobs Submitted</span>
                 </div>
-                <span className="font-medium">{recentJobs.length}</span>
+                <span className="font-medium">{jobsLast24h}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckCircle className="h-4 w-4 text-success" />
-                  <span className="text-sm">Completed</span>
+                  <span className="text-sm">Throughput</span>
                 </div>
-                <span className="font-medium text-success">{recentCompleted}</span>
+                <span className="font-medium text-success">{jobsPerHour.toFixed(1)}/hr</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <XCircle className="h-4 w-4 text-destructive" />
-                  <span className="text-sm">Failed</span>
+                  <span className="text-sm">Failed (all time)</span>
                 </div>
-                <span className="font-medium text-destructive">{recentFailed}</span>
+                <span className="font-medium text-destructive">{stats.failed}</span>
               </div>
-              {recentJobs.length > 0 && recentJobs[0] && (
-                <div className="pt-4 border-t">
-                  <div className="flex items-center justify-between text-sm text-muted-foreground">
-                    <span>Last Job</span>
-                    <span>{formatRelativeTime(new Date(recentJobs[0].created_at))}</span>
-                  </div>
-                </div>
-              )}
             </div>
           </CardContent>
         </Card>
