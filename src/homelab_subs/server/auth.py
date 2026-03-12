@@ -166,6 +166,7 @@ def create_access_token(
     username: str,
     is_admin: bool = False,
     expires_delta: Optional[timedelta] = None,
+    token_version: int = 0,
 ) -> str:
     """
     Create a JWT access token.
@@ -180,6 +181,8 @@ def create_access_token(
         Whether user has admin privileges.
     expires_delta : timedelta, optional
         Custom expiration time. Defaults to ACCESS_TOKEN_EXPIRE_MINUTES.
+    token_version : int
+        User's current token version for revocation support.
 
     Returns
     -------
@@ -203,6 +206,7 @@ def create_access_token(
         "is_admin": is_admin,
         "exp": expire,
         "type": "access",
+        "token_version": token_version,
     }
 
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
@@ -211,6 +215,7 @@ def create_access_token(
 def create_refresh_token(
     user_id: UUID,
     expires_delta: Optional[timedelta] = None,
+    token_version: int = 0,
 ) -> str:
     """
     Create a JWT refresh token.
@@ -223,6 +228,8 @@ def create_refresh_token(
         User's unique identifier.
     expires_delta : timedelta, optional
         Custom expiration time. Defaults to REFRESH_TOKEN_EXPIRE_DAYS.
+    token_version : int
+        User's current token version for revocation support.
 
     Returns
     -------
@@ -244,6 +251,7 @@ def create_refresh_token(
         "sub": str(user_id),
         "exp": expire,
         "type": "refresh",
+        "token_version": token_version,
     }
 
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
@@ -253,6 +261,7 @@ def create_token_pair(
     user_id: UUID,
     username: str,
     is_admin: bool = False,
+    token_version: int = 0,
 ) -> TokenPair:
     """
     Create both access and refresh tokens.
@@ -265,14 +274,16 @@ def create_token_pair(
         User's username.
     is_admin : bool
         Whether user has admin privileges.
+    token_version : int
+        User's current token version for revocation support.
 
     Returns
     -------
     TokenPair
         Access and refresh tokens with metadata.
     """
-    access_token = create_access_token(user_id, username, is_admin)
-    refresh_token = create_refresh_token(user_id)
+    access_token = create_access_token(user_id, username, is_admin, token_version=token_version)
+    refresh_token = create_refresh_token(user_id, token_version=token_version)
 
     return TokenPair(
         access_token=access_token,
@@ -443,6 +454,7 @@ try:
         FastAPI dependency to get current authenticated user.
 
         Use this dependency on routes that require authentication.
+        Verifies token version against the database to support token revocation.
 
         Returns
         -------
@@ -452,7 +464,7 @@ try:
         Raises
         ------
         HTTPException
-            401 if not authenticated or token is invalid.
+            401 if not authenticated or token is invalid/revoked.
         """
         if credentials is None:
             raise HTTPException(
@@ -469,6 +481,27 @@ try:
                 detail="Invalid or expired token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        # Verify token version against database
+        payload = decode_token(credentials.credentials)
+        if payload is not None:
+            from homelab_subs.server.repository import UserRepository
+            from homelab_subs.server.settings import get_settings
+
+            user_repo = UserRepository(settings=get_settings())
+            user = user_repo.get_user_by_id(token_data.user_id)
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if payload.get("token_version") != user.token_version:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         return token_data
 

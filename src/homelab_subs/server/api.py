@@ -935,6 +935,7 @@ async def register_user(request: Request, body: RegisterRequest):
             user_id=user.id,
             username=user.username,
             is_admin=user.is_admin,
+            token_version=user.token_version,
         )
 
         logger.info(f"Admin user '{user.username}' registered successfully")
@@ -984,6 +985,7 @@ async def login(request: Request, body: LoginRequest):
             user_id=user.id,
             username=user.username,
             is_admin=user.is_admin,
+            token_version=user.token_version,
         )
 
         return TokenResponse(
@@ -1008,7 +1010,7 @@ async def refresh_token(request: RefreshRequest):
     Use this when the access token has expired but the refresh token
     is still valid.
     """
-    from homelab_subs.server.auth import validate_refresh_token, create_token_pair
+    from homelab_subs.server.auth import validate_refresh_token, create_token_pair, decode_token
 
     try:
         user_id = validate_refresh_token(request.refresh_token)
@@ -1028,11 +1030,20 @@ async def refresh_token(request: RefreshRequest):
                 detail="User not found or inactive",
             )
 
+        # Verify token version to ensure refresh token hasn't been revoked
+        payload = decode_token(request.refresh_token)
+        if payload is not None and payload.get("token_version") != user.token_version:
+            raise HTTPException(
+                status_code=401,
+                detail="Refresh token has been revoked",
+            )
+
         # Generate new tokens
         tokens = create_token_pair(
             user_id=user.id,
             username=user.username,
             is_admin=user.is_admin,
+            token_version=user.token_version,
         )
 
         return TokenResponse(
@@ -1106,12 +1117,32 @@ async def change_password(
         # Update password
         user_repo.update_password(current_user.user_id, hash_password(request.new_password))
 
+        # Revoke all existing tokens by incrementing token version
+        user_repo.increment_token_version(current_user.user_id)
+
         return {"detail": "Password changed successfully"}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to change password: {e}")
         raise HTTPException(status_code=500, detail="Failed to change password")
+
+
+@app.post("/auth/logout", tags=["Authentication"])
+async def logout(current_user: TokenData = Depends(get_current_user)):
+    """
+    Log out the current user by revoking all existing tokens.
+
+    Increments the user's token version, which invalidates all
+    previously issued access and refresh tokens.
+    """
+    try:
+        user_repo = get_user_repository()
+        user_repo.increment_token_version(current_user.user_id)
+        return {"detail": "Logged out successfully"}
+    except Exception as e:
+        logger.error(f"Failed to logout: {e}")
+        raise HTTPException(status_code=500, detail="Failed to logout")
 
 
 # =============================================================================

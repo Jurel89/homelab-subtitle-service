@@ -883,6 +883,25 @@ class UserRepository:
         """Check if any users exist (for first-time setup)."""
         return self.count_users() > 0
 
+    def increment_token_version(self, user_id: uuid.UUID | str) -> None:
+        """
+        Increment a user's token version to revoke all existing tokens.
+
+        Parameters
+        ----------
+        user_id : UUID or str
+            The user whose tokens should be revoked.
+        """
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user:
+                user.token_version += 1
+
+        logger.info(f"Token version incremented for user {user_id}")
+
 
 class SettingsRepository:
     """

@@ -148,6 +148,7 @@ if SQLALCHEMY_AVAILABLE:
             DateTime(timezone=True),
             nullable=True,
         )
+        token_version: Mapped[int] = mapped_column(default=0)
 
         def __repr__(self) -> str:
             return f"User(id={self.id!r}, username={self.username!r})"
