@@ -115,7 +115,7 @@ export function JobDetailPage() {
               Cancel
             </Button>
           )}
-          {(job.status === 'failed' || job.status === 'cancelled') && (
+          {(job.status === 'failed' || job.status === 'canceled') && (
             <Button size="sm" onClick={handleRetry}>
               <RotateCcw className="mr-2 h-4 w-4" />
               Retry
@@ -239,7 +239,23 @@ export function JobDetailPage() {
                 <dt className="flex items-center justify-between text-muted-foreground">
                   Output
                   {job.status === 'done' && (
-                    <Button variant="ghost" size="sm">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={async () => {
+                        const token = localStorage.getItem('access_token');
+                        const response = await fetch(`/api/jobs/${job.id}/output`, {
+                          headers: token ? { Authorization: `Bearer ${token}` } : {},
+                        });
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `${job.id}.srt`;
+                        link.click();
+                        window.URL.revokeObjectURL(url);
+                      }}
+                    >
                       <Download className="mr-2 h-4 w-4" />
                       Download
                     </Button>

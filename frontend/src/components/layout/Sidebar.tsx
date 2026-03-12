@@ -23,7 +23,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { name: 'Dashboard', href: '/', icon: <LayoutDashboard className="h-5 w-5" /> },
-  { name: 'New Job', href: '/new', icon: <PlusCircle className="h-5 w-5" /> },
+  { name: 'New Job', href: '/jobs/new', icon: <PlusCircle className="h-5 w-5" /> },
   { name: 'Logs', href: '/logs', icon: <FileText className="h-5 w-5" /> },
   { name: 'KPIs', href: '/kpis', icon: <BarChart3 className="h-5 w-5" /> },
   { name: 'Settings', href: '/settings', icon: <Settings className="h-5 w-5" /> },
