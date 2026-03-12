@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import os
-import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
@@ -41,19 +40,34 @@ logger = logging.getLogger(__name__)
 
 # JWT Settings - MUST be set via environment variable in production
 _DEFAULT_SECRET = "your-secret-key-change-in-production"  # nosec B105 - Fallback only
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", _DEFAULT_SECRET)
 JWT_ALGORITHM = "HS256"
-
-# Warn if using default secret in non-development mode
-if JWT_SECRET_KEY == _DEFAULT_SECRET:
-    warnings.warn(
-        "JWT_SECRET_KEY environment variable not set. Using insecure default. "
-        "Set JWT_SECRET_KEY in production!",
-        UserWarning,
-        stacklevel=1,
-    )
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+
+def _validate_jwt_secret() -> str:
+    key = os.environ.get("JWT_SECRET_KEY", _DEFAULT_SECRET)
+    if key == _DEFAULT_SECRET:
+        raise RuntimeError(
+            "JWT_SECRET_KEY is not configured. "
+            "Set the JWT_SECRET_KEY environment variable to a random string of at least 32 characters. "
+            'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
+    if len(key) < 32:
+        raise RuntimeError(
+            f"JWT_SECRET_KEY is too short ({len(key)} chars). Minimum 32 characters required."
+        )
+    return key
+
+
+_jwt_secret_key: Optional[str] = None
+
+
+def get_jwt_secret() -> str:
+    global _jwt_secret_key
+    if _jwt_secret_key is None:
+        _jwt_secret_key = _validate_jwt_secret()
+    return _jwt_secret_key
 
 
 # =============================================================================
@@ -191,7 +205,7 @@ def create_access_token(
         "type": "access",
     }
 
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def create_refresh_token(
@@ -232,7 +246,7 @@ def create_refresh_token(
         "type": "refresh",
     }
 
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def create_token_pair(
@@ -289,7 +303,7 @@ def decode_token(token: str) -> Optional[dict]:
         )
 
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         return payload
     except JWTError as e:
         logger.warning(f"Token validation failed: {e}")
