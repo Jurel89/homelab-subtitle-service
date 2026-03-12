@@ -10,7 +10,7 @@ on jobs and related entities.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional, Sequence
 
 try:
@@ -323,7 +323,7 @@ class JobRepository(BaseRepository):
             job.status = status
 
             # Update timestamps
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             if status == JobStatus.RUNNING and job.started_at is None:
                 job.started_at = now
             elif status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELED):
@@ -762,7 +762,7 @@ class UserRepository(BaseRepository):
         with self.session() as session:
             user = session.get(User, user_id)
             if user:
-                user.last_login = datetime.utcnow()
+                user.last_login = datetime.now(timezone.utc)
 
     def update_password(
         self,
@@ -967,7 +967,7 @@ class SettingsRepository(BaseRepository):
             for field, value in kwargs.items():
                 setattr(settings, field, value)
 
-            settings.updated_at = datetime.utcnow()
+            settings.updated_at = datetime.now(timezone.utc)
             session.flush()
 
         logger.info(f"Updated global settings: {list(kwargs.keys())}")
