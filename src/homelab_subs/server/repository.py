@@ -10,18 +10,18 @@ on jobs and related entities.
 from __future__ import annotations
 
 import uuid
-from contextlib import contextmanager
-from datetime import datetime
-from typing import Any, Generator, Optional, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional, Sequence
 
 try:
-    from sqlalchemy import create_engine, select, desc, and_
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy import select, desc, and_
+    from sqlalchemy.exc import IntegrityError
 
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
 
+from .base_repository import BaseRepository
 from .models import (
     Base,
     Job,
@@ -34,13 +34,13 @@ from .models import (
     GlobalSettings,
     SQLALCHEMY_AVAILABLE as MODELS_AVAILABLE,
 )
-from .settings import Settings, get_settings
+from .settings import Settings
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
 
 
-class JobRepository:
+class JobRepository(BaseRepository):
     """
     Repository for managing Job entities in PostgreSQL.
 
@@ -76,21 +76,13 @@ class JobRepository:
         database_url: Optional[str] = None,
         settings: Optional[Settings] = None,
     ) -> None:
-        if not SQLALCHEMY_AVAILABLE or not MODELS_AVAILABLE:
+        if not MODELS_AVAILABLE:
             raise RuntimeError(
                 "SQLAlchemy is required for JobRepository. "
                 "Install with: pip install homelab-subtitle-service[server]"
             )
 
-        self._settings = settings or get_settings()
-        self._database_url = database_url or self._settings.database_url
-
-        self._engine = create_engine(
-            self._database_url,
-            echo=self._settings.log_level == "DEBUG",
-            pool_pre_ping=True,  # Check connection health
-        )
-        self._session_factory = sessionmaker(bind=self._engine)
+        super().__init__(database_url=database_url, settings=settings)
 
         logger.info(
             f"JobRepository initialized with database: {self._database_url.split('@')[-1]}"
@@ -105,28 +97,6 @@ class JobRepository:
         """Drop all database tables. Use with caution!"""
         Base.metadata.drop_all(self._engine)
         logger.warning("Database tables dropped")
-
-    @contextmanager
-    def session(self) -> Generator[Session, None, None]:
-        """
-        Context manager for database sessions.
-
-        Handles commit/rollback automatically.
-
-        Yields
-        ------
-        Session
-            SQLAlchemy session for database operations.
-        """
-        session = self._session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     # =========================================================================
     # Job CRUD Operations
@@ -251,7 +221,7 @@ class JobRepository:
         offset: int = 0,
         order_by: str = "created_at",
         order_desc: bool = True,
-    ) -> Sequence[Job]:
+    ) -> tuple[Sequence[Job], int]:
         """
         List jobs with optional filtering.
 
@@ -272,13 +242,11 @@ class JobRepository:
 
         Returns
         -------
-        Sequence[Job]
-            List of matching jobs.
+        tuple[Sequence[Job], int]
+            List of matching jobs and the total count (before pagination).
         """
         with self.session() as session:
-            query = select(Job)
-
-            # Apply filters
+            # Build filter conditions
             conditions = []
             if status is not None:
                 if isinstance(status, str):
@@ -290,11 +258,29 @@ class JobRepository:
                     job_type = JobType(job_type)
                 conditions.append(Job.type == job_type)
 
+            # Count query (same filters, no pagination)
+            count_query = select(func.count(Job.id))
+            if conditions:
+                count_query = count_query.where(and_(*conditions))
+            total = session.execute(count_query).scalar() or 0
+
+            # Main query
+            query = select(Job)
             if conditions:
                 query = query.where(and_(*conditions))
 
             # Apply ordering
-            order_column = getattr(Job, order_by, Job.created_at)
+            VALID_ORDER_FIELDS = {
+                "created_at",
+                "started_at",
+                "finished_at",
+                "status",
+                "priority",
+                "type",
+            }
+            if order_by not in VALID_ORDER_FIELDS:
+                order_by = "created_at"
+            order_column = getattr(Job, order_by)
             if order_desc:
                 query = query.order_by(desc(order_column))
             else:
@@ -307,7 +293,7 @@ class JobRepository:
             for job in jobs:
                 session.expunge(job)
 
-            return jobs
+            return jobs, total
 
     def update_status(
         self,
@@ -344,7 +330,7 @@ class JobRepository:
             job.status = status
 
             # Update timestamps
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             if status == JobStatus.RUNNING and job.started_at is None:
                 job.started_at = now
             elif status in (JobStatus.DONE, JobStatus.FAILED, JobStatus.CANCELED):
@@ -609,6 +595,29 @@ class JobRepository:
                 .where(Job.duration_seconds.isnot(None))
             )
 
+            # Average processing time (finished_at - started_at) for completed jobs
+            avg_processing_time = session.scalar(
+                select(func.avg(Job.duration_seconds))
+                .where(Job.status == JobStatus.DONE)
+                .where(Job.started_at.isnot(None))
+                .where(Job.finished_at.isnot(None))
+            )
+
+            # Jobs by type
+            type_rows = session.execute(
+                select(Job.type, func.count(Job.id)).group_by(Job.type)
+            ).all()
+            jobs_by_type = {row[0].value: row[1] for row in type_rows}
+
+            # Jobs created in last 24h
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            jobs_last_24h = (
+                session.scalar(
+                    select(func.count(Job.id)).where(Job.created_at > cutoff)
+                )
+                or 0
+            )
+
             # Total jobs
             total = sum(status_counts.values())
 
@@ -618,6 +627,11 @@ class JobRepository:
                 "avg_duration_seconds": float(avg_duration) if avg_duration else None,
                 "pending_count": status_counts.get(JobStatus.PENDING.value, 0),
                 "running_count": status_counts.get(JobStatus.RUNNING.value, 0),
+                "avg_processing_time_seconds": float(avg_processing_time)
+                if avg_processing_time
+                else None,
+                "jobs_by_type": jobs_by_type,
+                "jobs_last_24h": jobs_last_24h,
             }
 
 
@@ -626,7 +640,7 @@ if SQLALCHEMY_AVAILABLE:
     from sqlalchemy import func
 
 
-class UserRepository:
+class UserRepository(BaseRepository):
     """
     Repository for managing User entities in PostgreSQL.
 
@@ -654,36 +668,15 @@ class UserRepository:
         database_url: Optional[str] = None,
         settings: Optional[Settings] = None,
     ) -> None:
-        if not SQLALCHEMY_AVAILABLE or not MODELS_AVAILABLE:
+        if not MODELS_AVAILABLE:
             raise RuntimeError(
                 "SQLAlchemy is required for UserRepository. "
                 "Install with: pip install homelab-subtitle-service[server]"
             )
 
-        self._settings = settings or get_settings()
-        self._database_url = database_url or self._settings.database_url
-
-        self._engine = create_engine(
-            self._database_url,
-            echo=self._settings.log_level == "DEBUG",
-            pool_pre_ping=True,
-        )
-        self._session_factory = sessionmaker(bind=self._engine)
+        super().__init__(database_url=database_url, settings=settings)
 
         logger.info("UserRepository initialized")
-
-    @contextmanager
-    def session(self) -> Generator[Session, None, None]:
-        """Context manager for database sessions."""
-        session = self._session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     def create_user(
         self,
@@ -716,30 +709,30 @@ class UserRepository:
         from .auth import hash_password, validate_password_strength
 
         # Validate password strength
-        validate_password_strength(password)
-
-        # Hash the password
-        password_hash = hash_password(password)
-
-        user = User(
-            username=username,
-            password_hash=password_hash,
-            is_admin=is_admin,
-            is_active=True,
-        )
+        password_errors = validate_password_strength(password)
+        if password_errors:
+            raise ValueError(f"Password too weak: {'; '.join(password_errors)}")
 
         with self.session() as session:
-            # Check if username exists
-            existing = session.scalar(select(User).where(User.username == username))
-            if existing:
-                raise ValueError(f"Username '{username}' already exists")
+            if is_admin and self.has_any_users():
+                raise ValueError("Registration not allowed: admin user already exists")
 
+            hashed = hash_password(password)
+            user = User(
+                username=username,
+                password_hash=hashed,
+                is_admin=is_admin,
+                is_active=True,
+            )
             session.add(user)
-            session.flush()
-            user_id = user.id
-
-        logger.info(f"Created user '{username}' (admin={is_admin})")
-        return self.get_user_by_id(user_id)
+            try:
+                session.flush()
+            except IntegrityError:
+                session.rollback()
+                raise ValueError(f"Username '{username}' already exists")
+            session.commit()
+            session.refresh(user)
+            return user
 
     def get_user_by_id(self, user_id: uuid.UUID | str) -> Optional[User]:
         """Get a user by their ID."""
@@ -806,7 +799,7 @@ class UserRepository:
         with self.session() as session:
             user = session.get(User, user_id)
             if user:
-                user.last_login = datetime.utcnow()
+                user.last_login = datetime.now(timezone.utc)
 
     def update_password(
         self,
@@ -875,8 +868,27 @@ class UserRepository:
         """Check if any users exist (for first-time setup)."""
         return self.count_users() > 0
 
+    def increment_token_version(self, user_id: uuid.UUID | str) -> None:
+        """
+        Increment a user's token version to revoke all existing tokens.
 
-class SettingsRepository:
+        Parameters
+        ----------
+        user_id : UUID or str
+            The user whose tokens should be revoked.
+        """
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        with self.session() as session:
+            user = session.get(User, user_id)
+            if user:
+                user.token_version += 1
+
+        logger.info(f"Token version incremented for user {user_id}")
+
+
+class SettingsRepository(BaseRepository):
     """
     Repository for managing GlobalSettings in PostgreSQL.
 
@@ -902,36 +914,15 @@ class SettingsRepository:
         database_url: Optional[str] = None,
         settings: Optional[Settings] = None,
     ) -> None:
-        if not SQLALCHEMY_AVAILABLE or not MODELS_AVAILABLE:
+        if not MODELS_AVAILABLE:
             raise RuntimeError(
                 "SQLAlchemy is required for SettingsRepository. "
                 "Install with: pip install homelab-subtitle-service[server]"
             )
 
-        self._settings = settings or get_settings()
-        self._database_url = database_url or self._settings.database_url
-
-        self._engine = create_engine(
-            self._database_url,
-            echo=self._settings.log_level == "DEBUG",
-            pool_pre_ping=True,
-        )
-        self._session_factory = sessionmaker(bind=self._engine)
+        super().__init__(database_url=database_url, settings=settings)
 
         logger.info("SettingsRepository initialized")
-
-    @contextmanager
-    def session(self) -> Generator[Session, None, None]:
-        """Context manager for database sessions."""
-        session = self._session_factory()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     def get_settings(self) -> GlobalSettings:
         """
@@ -1013,7 +1004,7 @@ class SettingsRepository:
             for field, value in kwargs.items():
                 setattr(settings, field, value)
 
-            settings.updated_at = datetime.utcnow()
+            settings.updated_at = datetime.now(timezone.utc)
             session.flush()
 
         logger.info(f"Updated global settings: {list(kwargs.keys())}")

@@ -14,14 +14,15 @@ from __future__ import annotations
 
 import logging
 import os
-import warnings
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
 try:
     from passlib.context import CryptContext
-    from jose import JWTError, jwt
+    import jwt
+    from jwt.exceptions import PyJWTError as JWTError
     from pydantic import BaseModel
 
     AUTH_DEPS_AVAILABLE = True
@@ -41,19 +42,34 @@ logger = logging.getLogger(__name__)
 
 # JWT Settings - MUST be set via environment variable in production
 _DEFAULT_SECRET = "your-secret-key-change-in-production"  # nosec B105 - Fallback only
-JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", _DEFAULT_SECRET)
 JWT_ALGORITHM = "HS256"
-
-# Warn if using default secret in non-development mode
-if JWT_SECRET_KEY == _DEFAULT_SECRET:
-    warnings.warn(
-        "JWT_SECRET_KEY environment variable not set. Using insecure default. "
-        "Set JWT_SECRET_KEY in production!",
-        UserWarning,
-        stacklevel=1,
-    )
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+
+
+def _validate_jwt_secret() -> str:
+    key = os.environ.get("JWT_SECRET_KEY", _DEFAULT_SECRET)
+    if key == _DEFAULT_SECRET:
+        raise RuntimeError(
+            "JWT_SECRET_KEY is not configured. "
+            "Set the JWT_SECRET_KEY environment variable to a random string of at least 32 characters. "
+            'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"'
+        )
+    if len(key) < 32:
+        raise RuntimeError(
+            f"JWT_SECRET_KEY is too short ({len(key)} chars). Minimum 32 characters required."
+        )
+    return key
+
+
+_jwt_secret_key: Optional[str] = None
+
+
+def get_jwt_secret() -> str:
+    global _jwt_secret_key
+    if _jwt_secret_key is None:
+        _jwt_secret_key = _validate_jwt_secret()
+    return _jwt_secret_key
 
 
 # =============================================================================
@@ -152,6 +168,7 @@ def create_access_token(
     username: str,
     is_admin: bool = False,
     expires_delta: Optional[timedelta] = None,
+    token_version: int = 0,
 ) -> str:
     """
     Create a JWT access token.
@@ -166,6 +183,8 @@ def create_access_token(
         Whether user has admin privileges.
     expires_delta : timedelta, optional
         Custom expiration time. Defaults to ACCESS_TOKEN_EXPIRE_MINUTES.
+    token_version : int
+        User's current token version for revocation support.
 
     Returns
     -------
@@ -189,14 +208,16 @@ def create_access_token(
         "is_admin": is_admin,
         "exp": expire,
         "type": "access",
+        "token_version": token_version,
     }
 
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def create_refresh_token(
     user_id: UUID,
     expires_delta: Optional[timedelta] = None,
+    token_version: int = 0,
 ) -> str:
     """
     Create a JWT refresh token.
@@ -209,6 +230,8 @@ def create_refresh_token(
         User's unique identifier.
     expires_delta : timedelta, optional
         Custom expiration time. Defaults to REFRESH_TOKEN_EXPIRE_DAYS.
+    token_version : int
+        User's current token version for revocation support.
 
     Returns
     -------
@@ -230,15 +253,17 @@ def create_refresh_token(
         "sub": str(user_id),
         "exp": expire,
         "type": "refresh",
+        "token_version": token_version,
     }
 
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def create_token_pair(
     user_id: UUID,
     username: str,
     is_admin: bool = False,
+    token_version: int = 0,
 ) -> TokenPair:
     """
     Create both access and refresh tokens.
@@ -251,14 +276,18 @@ def create_token_pair(
         User's username.
     is_admin : bool
         Whether user has admin privileges.
+    token_version : int
+        User's current token version for revocation support.
 
     Returns
     -------
     TokenPair
         Access and refresh tokens with metadata.
     """
-    access_token = create_access_token(user_id, username, is_admin)
-    refresh_token = create_refresh_token(user_id)
+    access_token = create_access_token(
+        user_id, username, is_admin, token_version=token_version
+    )
+    refresh_token = create_refresh_token(user_id, token_version=token_version)
 
     return TokenPair(
         access_token=access_token,
@@ -289,7 +318,7 @@ def decode_token(token: str) -> Optional[dict]:
         )
 
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         return payload
     except JWTError as e:
         logger.warning(f"Token validation failed: {e}")
@@ -370,42 +399,45 @@ class PasswordValidationError(Exception):
     pass
 
 
-def validate_password_strength(password: str) -> None:
+def validate_password_strength(password: str) -> list[str]:
     """
     Validate password meets security requirements.
 
     Requirements:
-    - Minimum 8 characters
+    - Minimum 12 characters
     - At least one uppercase letter
     - At least one lowercase letter
     - At least one digit
+    - At least one special character
 
     Parameters
     ----------
     password : str
         Password to validate.
 
-    Raises
-    ------
-    PasswordValidationError
-        If password doesn't meet requirements.
+    Returns
+    -------
+    list[str]
+        List of validation error messages. Empty list means password is valid.
     """
     errors = []
 
-    if len(password) < 8:
-        errors.append("Password must be at least 8 characters long")
+    if len(password) < 12:
+        errors.append("Password must be at least 12 characters long")
 
-    if not any(c.isupper() for c in password):
+    if not re.search(r"[A-Z]", password):
         errors.append("Password must contain at least one uppercase letter")
 
-    if not any(c.islower() for c in password):
+    if not re.search(r"[a-z]", password):
         errors.append("Password must contain at least one lowercase letter")
 
-    if not any(c.isdigit() for c in password):
+    if not re.search(r"\d", password):
         errors.append("Password must contain at least one digit")
 
-    if errors:
-        raise PasswordValidationError("; ".join(errors))
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>_\-+=\[\]\\;'/`~]", password):
+        errors.append("Password must contain at least one special character")
+
+    return errors
 
 
 # =============================================================================
@@ -429,6 +461,7 @@ try:
         FastAPI dependency to get current authenticated user.
 
         Use this dependency on routes that require authentication.
+        Verifies token version against the database to support token revocation.
 
         Returns
         -------
@@ -438,7 +471,7 @@ try:
         Raises
         ------
         HTTPException
-            401 if not authenticated or token is invalid.
+            401 if not authenticated or token is invalid/revoked.
         """
         if credentials is None:
             raise HTTPException(
@@ -455,6 +488,27 @@ try:
                 detail="Invalid or expired token",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        # Verify token version against database
+        payload = decode_token(credentials.credentials)
+        if payload is not None:
+            from homelab_subs.server.repository import UserRepository
+            from homelab_subs.server.settings import get_settings
+
+            user_repo = UserRepository(settings=get_settings())
+            user = user_repo.get_user_by_id(token_data.user_id)
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if payload.get("token_version") != user.token_version:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token has been revoked",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         return token_data
 

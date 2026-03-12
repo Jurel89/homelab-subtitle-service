@@ -148,6 +148,7 @@ if SQLALCHEMY_AVAILABLE:
             DateTime(timezone=True),
             nullable=True,
         )
+        token_version: Mapped[int] = mapped_column(default=0)
 
         def __repr__(self) -> str:
             return f"User(id={self.id!r}, username={self.username!r})"
@@ -411,6 +412,9 @@ if SQLALCHEMY_AVAILABLE:
 
         # Error handling
         error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+        # Worker logs (appended during processing)
+        logs: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
         # Additional options (JSON)
         options: Mapped[Optional[dict]] = mapped_column(

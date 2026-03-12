@@ -13,12 +13,12 @@ preserving timing information and subtitle structure.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, Optional
 
 from ..logging_config import get_logger
+from .text_utils import format_timestamp, parse_srt_content
 
 logger = get_logger(__name__)
 
@@ -106,7 +106,11 @@ NLLB_CODE_TO_LANG: dict[str, str] = {v: k for k, v in NLLB_LANGUAGE_CODES.items(
 @dataclass
 class SubtitleEntry:
     """
-    Represents a single subtitle entry from an SRT file.
+    Represents a single subtitle entry from an SRT file with string timestamps.
+
+    This is a thin view over SubtitleCue that keeps timestamps as strings,
+    preserved for backward compatibility. Internal parsing delegates to the
+    canonical parse_srt_content() from text_utils.
     """
 
     index: int
@@ -295,50 +299,22 @@ class Translator:
     def _parse_srt(self, content: str) -> list[SubtitleEntry]:
         """
         Parse SRT content into a list of SubtitleEntry objects.
+
+        Delegates to the canonical parse_srt_content() implementation and
+        converts the resulting SubtitleCue objects (which store timestamps
+        as floats) back into SubtitleEntry objects (string timestamps) for
+        backward compatibility with callers that expect string-format times.
         """
-        entries: list[SubtitleEntry] = []
-
-        # Split by double newlines (subtitle blocks)
-        # Handle both \r\n and \n line endings
-        content = content.replace("\r\n", "\n")
-        blocks = re.split(r"\n\n+", content.strip())
-
-        for block in blocks:
-            lines = block.strip().split("\n")
-            if len(lines) < 3:
-                continue
-
-            try:
-                index = int(lines[0].strip())
-            except ValueError:
-                logger.warning(f"Skipping invalid subtitle index: {lines[0]}")
-                continue
-
-            # Parse timestamp line
-            timestamp_match = re.match(
-                r"(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})",
-                lines[1].strip(),
+        cues = parse_srt_content(content)
+        return [
+            SubtitleEntry(
+                index=cue.index,
+                start_time=format_timestamp(cue.start_seconds),
+                end_time=format_timestamp(cue.end_seconds),
+                text=cue.text,
             )
-            if not timestamp_match:
-                logger.warning(f"Skipping invalid timestamp: {lines[1]}")
-                continue
-
-            start_time = timestamp_match.group(1)
-            end_time = timestamp_match.group(2)
-
-            # Remaining lines are the subtitle text
-            text = "\n".join(lines[2:]).strip()
-
-            entries.append(
-                SubtitleEntry(
-                    index=index,
-                    start_time=start_time,
-                    end_time=end_time,
-                    text=text,
-                )
-            )
-
-        return entries
+            for cue in cues
+        ]
 
     def _entries_to_srt(self, entries: list[SubtitleEntry]) -> str:
         """

@@ -21,13 +21,13 @@ This is useful for:
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 
 from .sync import SubtitleCue, parse_srt_file, parse_srt_content
+from .text_utils import normalize_text
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -190,40 +190,8 @@ class ComparisonResult:
     hypothesis_path: Optional[Path] = None
 
 
-def _normalize_text(text: str) -> str:
-    """
-    Normalize text for comparison by removing formatting and extra whitespace.
-
-    Parameters
-    ----------
-    text : str
-        Original text.
-
-    Returns
-    -------
-    str
-        Normalized lowercase text.
-    """
-    # Remove common subtitle formatting tags
-    text = re.sub(r"<[^>]+>", "", text)  # HTML-like tags
-    text = re.sub(r"\{[^}]+\}", "", text)  # ASS-style tags
-    text = re.sub(r"\[[^\]]+\]", "", text)  # Square bracket annotations
-
-    # Remove speaker labels like "JOHN:" at start of lines
-    text = re.sub(r"^[A-Z]+:\s*", "", text, flags=re.MULTILINE)
-
-    # Normalize punctuation
-    text = re.sub(r"[" "''「」『』]", '"', text)  # Normalize quotes
-    text = re.sub(r"[–—]", "-", text)  # Normalize dashes
-    text = re.sub(r"…", "...", text)  # Normalize ellipsis
-
-    # Remove punctuation except apostrophes (important for contractions)
-    text = re.sub(r"[^\w\s']", " ", text)
-
-    # Normalize whitespace and lowercase
-    text = " ".join(text.lower().split())
-
-    return text
+# Backwards-compatible alias for the canonical implementation in text_utils.
+_normalize_text = normalize_text
 
 
 def _get_words(text: str) -> list[str]:

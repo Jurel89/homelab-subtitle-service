@@ -88,7 +88,7 @@ export function DashboardPage() {
             <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Link to="/new">
+          <Link to="/jobs/new">
             <Button size="sm">
               <Play className="mr-2 h-4 w-4" />
               New Job
@@ -156,7 +156,7 @@ export function DashboardPage() {
             <option value="running">Running</option>
             <option value="done">Completed</option>
             <option value="failed">Failed</option>
-            <option value="cancelled">Cancelled</option>
+            <option value="canceled">Cancelled</option>
           </select>
           <select
             className="rounded-md border bg-background px-3 py-2 text-sm"
@@ -242,7 +242,7 @@ export function DashboardPage() {
                               <XCircle className="h-4 w-4" />
                             </Button>
                           )}
-                          {(job.status === 'failed' || job.status === 'cancelled') && (
+                          {(job.status === 'failed' || job.status === 'canceled') && (
                             <Button
                               variant="ghost"
                               size="icon"

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "homelab-subtitle-service"
-version = "0.1.0"
+version = "0.3.0"
 description = "CLI and service for generating subtitles from video files using ffmpeg and Whisper."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -58,7 +58,9 @@ server = [
   "pydantic-settings>=2.1.0",
   # Authentication
   "passlib[argon2]>=1.7.4",
-  "python-jose[cryptography]>=3.3.0",
+  "PyJWT[crypto]>=2.8.0",
+  # Rate limiting
+  "slowapi>=0.1.9",
 ]
 dev = [
   "pytest>=7.0.0",

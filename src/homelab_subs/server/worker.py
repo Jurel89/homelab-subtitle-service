@@ -20,11 +20,11 @@ from sqlalchemy.orm import sessionmaker
 
 from homelab_subs.server.settings import get_settings
 from homelab_subs.server.models import Job, JobStatus, JobStage, JobType
-from homelab_subs.core.audio import AudioExtractor
-from homelab_subs.core.transcription import WhisperTranscriber
-from homelab_subs.core.translation import SubtitleTranslator
-from homelab_subs.core.srt import SRTParser, SRTGenerator
-from homelab_subs.core.sync import SubtitleSynchronizer
+from homelab_subs.core.audio import FFmpeg
+from homelab_subs.core.transcription import Transcriber, TranscriberConfig
+from homelab_subs.core.translation import Translator, TranslatorConfig
+from homelab_subs.core.srt import write_srt_file
+from homelab_subs.core.sync import SubtitleSyncer
 from homelab_subs.core.comparison import SubtitleComparator
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class JobContext:
     def check_cancelled(self) -> bool:
         """Check if job has been cancelled. Refreshes from database."""
         self.session.refresh(self.job)
-        return self.job.status == JobStatus.CANCELLED
+        return self.job.status == JobStatus.CANCELED
 
     def raise_if_cancelled(self):
         """Raise JobCancelledException if job was cancelled."""
@@ -92,7 +92,7 @@ class JobContext:
 
     def update_stage(self, stage: JobStage, progress: int = 0):
         """Update job stage and progress."""
-        self.job.stage = stage
+        self.job.current_stage = stage
         self.job.progress = progress
         self.session.commit()
         logger.info(f"Job {self.job_id}: stage={stage.value}, progress={progress}%")
@@ -115,8 +115,8 @@ class JobContext:
 
     def complete(self, output_path: Optional[str] = None):
         """Mark job as completed."""
-        self.job.status = JobStatus.COMPLETED
-        self.job.stage = JobStage.COMPLETED
+        self.job.status = JobStatus.DONE
+        self.job.current_stage = JobStage.COMPLETED
         self.job.progress = 100
         if output_path:
             self.job.output_path = output_path
@@ -180,12 +180,10 @@ def process_job(job_id: str) -> dict:
                 result = _process_transcription(ctx)
             elif job_type == JobType.TRANSLATE:
                 result = _process_translation(ctx)
-            elif job_type == JobType.SYNC:
+            elif job_type == JobType.SYNC_SUBTITLE:
                 result = _process_sync(ctx)
             elif job_type == JobType.COMPARE:
                 result = _process_comparison(ctx)
-            elif job_type == JobType.FULL_PIPELINE:
-                result = _process_full_pipeline(ctx)
             else:
                 raise ValueError(f"Unknown job type: {job_type}")
 
@@ -199,8 +197,9 @@ def process_job(job_id: str) -> dict:
             return {"status": "cancelled", "job_id": job_id}
 
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            ctx.fail(error_msg)
+            logger.error(f"Job {ctx.job_id} failed: {traceback.format_exc()}")
+            user_error = f"{type(e).__name__}: {str(e)}"
+            ctx.fail(user_error)
             raise
 
 
@@ -210,7 +209,7 @@ def _process_transcription(ctx: JobContext) -> dict:
 
     Stages: EXTRACTING_AUDIO -> TRANSCRIBING -> GENERATING_SRT
     """
-    input_path = Path(ctx.job.input_path)
+    input_path = Path(ctx.job.source_path)
     output_path = (
         Path(ctx.job.output_path)
         if ctx.job.output_path
@@ -219,21 +218,22 @@ def _process_transcription(ctx: JobContext) -> dict:
 
     # Get options from job
     options = ctx.job.options or {}
-    model_size = ctx.job.model_size or "base"
-    compute_type = ctx.job.compute_type or "float16"
+    model_name = ctx.job.model_name or "small"
+    compute_type = ctx.job.compute_type or "int8"
+    device = ctx.job.device or "cpu"
 
     # Stage 1: Extract audio (if video file)
     ctx.update_stage(JobStage.EXTRACTING_AUDIO, 0)
     ctx.add_log(f"Extracting audio from {input_path}")
     ctx.raise_if_cancelled()
 
-    audio_extractor = AudioExtractor()
-    audio_path = ctx.create_temp_file(suffix=".wav")
+    ffmpeg = FFmpeg()
 
     # Check if input is video (needs audio extraction) or already audio
     video_extensions = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
     if input_path.suffix.lower() in video_extensions:
-        audio_extractor.extract(str(input_path), str(audio_path))
+        audio_temp = ctx.create_temp_file(suffix=".wav")
+        audio_path = ffmpeg.extract_audio_to_wav(input_path, output_path=audio_temp)
         ctx.add_log("Audio extracted to temporary file")
     else:
         # Assume it's already an audio file
@@ -244,27 +244,29 @@ def _process_transcription(ctx: JobContext) -> dict:
 
     # Stage 2: Transcribe audio
     ctx.update_stage(JobStage.TRANSCRIBING, 20)
-    ctx.add_log(f"Transcribing with model={model_size}, compute_type={compute_type}")
+    ctx.add_log(f"Transcribing with model={model_name}, compute_type={compute_type}")
 
-    transcriber = WhisperTranscriber(
-        model_size=model_size,
+    config = TranscriberConfig(
+        model_name=model_name,
         compute_type=compute_type,
-        device=options.get("device", "auto"),
+        device=device,
     )
+    transcriber = Transcriber(config=config)
 
     # Create progress callback
-    def transcription_progress(current: int, total: int):
+    def transcription_progress(pct: float, segment_count: int):
         # Map transcription progress to 20-80% of job progress
-        if total > 0:
-            pct = 20 + int((current / total) * 60)
-            ctx.update_progress(pct)
+        job_pct = 20 + int(pct * 0.6)
+        ctx.update_progress(job_pct)
 
     # Transcribe
-    source_language = ctx.job.source_language
-    segments = transcriber.transcribe(
-        str(audio_path),
+    source_language = ctx.job.language
+    task = options.get("task", "transcribe")
+    segments = transcriber.transcribe_file(
+        audio_path=audio_path,
         language=source_language,
-        task="transcribe",
+        task=task,
+        progress_callback=transcription_progress,
     )
 
     ctx.update_progress(80)
@@ -274,8 +276,7 @@ def _process_transcription(ctx: JobContext) -> dict:
     ctx.update_stage(JobStage.GENERATING_SRT, 80)
     ctx.add_log(f"Generating SRT file at {output_path}")
 
-    generator = SRTGenerator()
-    generator.generate(segments, str(output_path))
+    write_srt_file(segments, output_path)
 
     ctx.update_progress(100)
     ctx.add_log(f"SRT generated with {len(segments)} segments")
@@ -293,56 +294,52 @@ def _process_translation(ctx: JobContext) -> dict:
     Takes an existing SRT file and translates it.
     Stages: TRANSLATING -> GENERATING_SRT
     """
-    input_path = Path(ctx.job.input_path)
-    output_path = (
-        Path(ctx.job.output_path)
-        if ctx.job.output_path
-        else input_path.with_stem(f"{input_path.stem}_{ctx.job.target_language}")
-    )
-
+    input_path = Path(ctx.job.source_path)
     options = ctx.job.options or {}
-    source_lang = ctx.job.source_language or "auto"
+    source_lang = ctx.job.language or "en"
     target_lang = ctx.job.target_language
 
     if not target_lang:
         raise ValueError("Target language is required for translation jobs")
 
-    # Stage 1: Parse source SRT
-    ctx.update_stage(JobStage.TRANSLATING, 0)
-    ctx.add_log(f"Parsing source SRT: {input_path}")
-    ctx.raise_if_cancelled()
-
-    parser = SRTParser()
-    cues = parser.parse(str(input_path))
-    ctx.add_log(f"Parsed {len(cues)} subtitle cues")
-    ctx.update_progress(10)
-
-    # Stage 2: Translate
-    ctx.add_log(f"Translating from {source_lang} to {target_lang}")
-
-    translator = SubtitleTranslator(
-        model_name=options.get("translation_model", "Helsinki-NLP/opus-mt-en-es"),
-        source_lang=source_lang,
-        target_lang=target_lang,
+    output_path = (
+        Path(ctx.job.output_path)
+        if ctx.job.output_path
+        else input_path.with_suffix(f".{target_lang}.srt")
     )
 
-    translated_cues = translator.translate_cues(cues)
-    ctx.update_progress(80)
+    # Stage 1: Translate SRT file
+    ctx.update_stage(JobStage.TRANSLATING, 0)
+    ctx.add_log(f"Translating {input_path} from {source_lang} to {target_lang}")
     ctx.raise_if_cancelled()
 
-    # Stage 3: Generate translated SRT
-    ctx.update_stage(JobStage.GENERATING_SRT, 80)
-    ctx.add_log(f"Writing translated SRT to {output_path}")
+    translator = Translator(
+        config=TranslatorConfig(
+            backend=options.get("backend", "nllb"),
+            device=ctx.job.device or "cpu",
+        )
+    )
 
-    generator = SRTGenerator()
-    generator.generate_from_cues(translated_cues, str(output_path))
+    def translation_progress(pct: float, items_done: int):
+        # Map translation progress to 0-90% of job progress
+        job_pct = int(pct * 0.9)
+        ctx.update_progress(job_pct)
+
+    translator.translate_srt_file(
+        input_path=input_path,
+        output_path=output_path,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        progress_callback=translation_progress,
+    )
 
     ctx.update_progress(100)
-    ctx.add_log(f"Translation complete: {len(translated_cues)} cues")
+    ctx.raise_if_cancelled()
+
+    ctx.add_log(f"Translation complete: {output_path}")
 
     return {
         "output_path": str(output_path),
-        "cues_count": len(translated_cues),
     }
 
 
@@ -350,74 +347,51 @@ def _process_sync(ctx: JobContext) -> dict:
     """
     Process a sync job.
 
-    Synchronizes subtitles with audio.
-    Stages: EXTRACTING_AUDIO -> SYNCING -> GENERATING_SRT
+    Synchronizes subtitles with video audio.
+    Stages: SYNCING
     """
-    input_path = Path(ctx.job.input_path)
-    reference_path = Path(ctx.job.reference_path) if ctx.job.reference_path else None
+    video_path = Path(ctx.job.source_path)
+    subtitle_path = Path(ctx.job.subtitle_path) if ctx.job.subtitle_path else None
     output_path = (
         Path(ctx.job.output_path)
         if ctx.job.output_path
-        else input_path.with_stem(f"{input_path.stem}_synced")
+        else subtitle_path.with_stem(f"{subtitle_path.stem}.synced")
+        if subtitle_path
+        else video_path.with_suffix(".synced.srt")
     )
 
-    if not reference_path:
-        raise ValueError("Reference audio/video path is required for sync jobs")
+    if not subtitle_path:
+        raise ValueError("Subtitle path is required for sync jobs")
 
-    options = ctx.job.options or {}
-
-    # Stage 1: Extract audio if needed
-    ctx.update_stage(JobStage.EXTRACTING_AUDIO, 0)
-    ctx.add_log(f"Preparing audio from {reference_path}")
+    # Stage 1: Synchronize subtitles with video audio
+    ctx.update_stage(JobStage.SYNCING, 0)
+    ctx.add_log(f"Synchronizing {subtitle_path} with {video_path}")
     ctx.raise_if_cancelled()
 
-    audio_extractor = AudioExtractor()
-    audio_path = ctx.create_temp_file(suffix=".wav")
+    syncer = SubtitleSyncer()
 
-    video_extensions = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
-    if reference_path.suffix.lower() in video_extensions:
-        audio_extractor.extract(str(reference_path), str(audio_path))
-    else:
-        audio_path = reference_path
+    def sync_progress(pct: float, segment_count: int):
+        ctx.update_progress(int(pct * 0.9))
 
-    ctx.update_progress(20)
-    ctx.raise_if_cancelled()
-
-    # Stage 2: Parse source subtitles
-    ctx.update_stage(JobStage.SYNCING, 20)
-    ctx.add_log(f"Parsing subtitles from {input_path}")
-
-    parser = SRTParser()
-    cues = parser.parse(str(input_path))
-    ctx.add_log(f"Parsed {len(cues)} subtitle cues")
-    ctx.update_progress(30)
-
-    # Stage 3: Synchronize
-    ctx.add_log("Synchronizing subtitles with audio")
-
-    synchronizer = SubtitleSynchronizer()
-    synced_cues = synchronizer.sync(
-        cues=cues,
-        audio_path=str(audio_path),
-        model_size=options.get("sync_model", "tiny"),
+    result = syncer.sync_subtitles(
+        video_path=video_path,
+        srt_path=subtitle_path,
+        output_path=output_path,
+        progress_callback=sync_progress,
     )
-
-    ctx.update_progress(80)
-    ctx.raise_if_cancelled()
-
-    # Stage 4: Generate synced SRT
-    ctx.update_stage(JobStage.GENERATING_SRT, 80)
-    ctx.add_log(f"Writing synced SRT to {output_path}")
-
-    generator = SRTGenerator()
-    generator.generate_from_cues(synced_cues, str(output_path))
 
     ctx.update_progress(100)
-    ctx.add_log(f"Sync complete: {len(synced_cues)} cues")
+    ctx.add_log(
+        f"Sync complete: {result.matched_count} matched, "
+        f"{result.interpolated_count} interpolated, "
+        f"{result.unchanged_count} unchanged"
+    )
 
     return {
         "output_path": str(output_path),
-        "cues_count": len(synced_cues),
+        "matched_count": result.matched_count,
+        "interpolated_count": result.interpolated_count,
+        "unchanged_count": result.unchanged_count,
     }
 
 
@@ -428,23 +402,26 @@ def _process_comparison(ctx: JobContext) -> dict:
     Compares two SRT files and generates accuracy metrics.
     Stages: COMPARING
     """
-    input_path = Path(ctx.job.input_path)  # Reference (human) subtitles
-    reference_path = Path(ctx.job.reference_path)  # Hypothesis (machine) subtitles
+    import json
+    from dataclasses import asdict
+
+    if not ctx.job.subtitle_path:
+        raise ValueError(
+            "Subtitle path (hypothesis SRT) is required for comparison jobs"
+        )
+
+    reference_path = Path(ctx.job.source_path)  # Reference (human) subtitles
+    hypothesis_path = Path(ctx.job.subtitle_path)  # Hypothesis (machine) subtitles
     output_path = (
         Path(ctx.job.output_path)
         if ctx.job.output_path
-        else input_path.with_stem(f"{input_path.stem}_comparison").with_suffix(".json")
+        else reference_path.with_stem(f"{reference_path.stem}_comparison").with_suffix(
+            ".json"
+        )
     )
 
-    if not reference_path:
-        raise ValueError(
-            "Reference path (hypothesis SRT) is required for comparison jobs"
-        )
-
-    # Note: options available via ctx.job.options if needed for future extensions
-
     ctx.update_stage(JobStage.COMPARING, 0)
-    ctx.add_log(f"Comparing {input_path} with {reference_path}")
+    ctx.add_log(f"Comparing {reference_path} with {hypothesis_path}")
     ctx.raise_if_cancelled()
 
     # Create comparator
@@ -454,8 +431,8 @@ def _process_comparison(ctx: JobContext) -> dict:
 
     # Run comparison
     result = comparator.compare_files(
-        reference_path=str(input_path),
-        hypothesis_path=str(reference_path),
+        reference_path=reference_path,
+        hypothesis_path=hypothesis_path,
     )
 
     ctx.update_progress(80)
@@ -464,122 +441,28 @@ def _process_comparison(ctx: JobContext) -> dict:
     # Save results
     ctx.add_log(f"Writing comparison results to {output_path}")
 
-    import json
+    # Serialize result using dataclasses.asdict, converting Path objects to strings
+    result_dict = asdict(result)
+    result_dict.pop("segment_comparisons", None)  # Remove verbose per-segment data
+    if result_dict.get("reference_path"):
+        result_dict["reference_path"] = str(result_dict["reference_path"])
+    if result_dict.get("hypothesis_path"):
+        result_dict["hypothesis_path"] = str(result_dict["hypothesis_path"])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
-        json.dump(result.to_dict(), f, indent=2)
+        json.dump(result_dict, f, indent=2)
 
     ctx.update_progress(100)
     ctx.add_log(
-        f"Comparison complete - WER: {result.text_metrics.wer:.2%}, CER: {result.text_metrics.cer:.2%}"
+        f"Comparison complete - WER: {result.text_metrics.word_error_rate:.2%}, "
+        f"CER: {result.text_metrics.character_error_rate:.2%}"
     )
 
     return {
         "output_path": str(output_path),
-        "wer": result.text_metrics.wer,
-        "cer": result.text_metrics.cer,
-    }
-
-
-def _process_full_pipeline(ctx: JobContext) -> dict:
-    """
-    Process a full pipeline job.
-
-    Complete workflow: video -> audio -> transcription -> (optional translation) -> SRT
-    Stages: EXTRACTING_AUDIO -> TRANSCRIBING -> TRANSLATING (optional) -> GENERATING_SRT
-    """
-    input_path = Path(ctx.job.input_path)
-    output_path = (
-        Path(ctx.job.output_path)
-        if ctx.job.output_path
-        else input_path.with_suffix(".srt")
-    )
-
-    options = ctx.job.options or {}
-    model_size = ctx.job.model_size or "base"
-    compute_type = ctx.job.compute_type or "float16"
-    source_lang = ctx.job.source_language
-    target_lang = ctx.job.target_language
-
-    # Stage 1: Extract audio
-    ctx.update_stage(JobStage.EXTRACTING_AUDIO, 0)
-    ctx.add_log(f"Extracting audio from {input_path}")
-    ctx.raise_if_cancelled()
-
-    audio_extractor = AudioExtractor()
-    audio_path = ctx.create_temp_file(suffix=".wav")
-
-    video_extensions = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
-    if input_path.suffix.lower() in video_extensions:
-        audio_extractor.extract(str(input_path), str(audio_path))
-        ctx.add_log("Audio extracted successfully")
-    else:
-        audio_path = input_path
-
-    ctx.update_progress(10)
-    ctx.raise_if_cancelled()
-
-    # Stage 2: Transcribe
-    ctx.update_stage(JobStage.TRANSCRIBING, 10)
-    ctx.add_log(f"Transcribing with model={model_size}, compute_type={compute_type}")
-
-    transcriber = WhisperTranscriber(
-        model_size=model_size,
-        compute_type=compute_type,
-        device=options.get("device", "auto"),
-    )
-
-    segments = transcriber.transcribe(
-        str(audio_path),
-        language=source_lang,
-        task="transcribe",
-    )
-
-    ctx.update_progress(50)
-    ctx.add_log(f"Transcription complete: {len(segments)} segments")
-    ctx.raise_if_cancelled()
-
-    # Stage 3: Translate (if target language specified)
-    cues = segments  # Will be replaced if translation happens
-
-    if target_lang and target_lang != source_lang:
-        ctx.update_stage(JobStage.TRANSLATING, 50)
-        ctx.add_log(f"Translating from {source_lang or 'auto'} to {target_lang}")
-
-        translator = SubtitleTranslator(
-            source_lang=source_lang or "auto",
-            target_lang=target_lang,
-        )
-
-        cues = translator.translate_cues(segments)
-        ctx.update_progress(80)
-        ctx.add_log(f"Translation complete: {len(cues)} cues")
-
-        # Update output path to include target language
-        if not ctx.job.output_path:
-            output_path = input_path.with_stem(
-                f"{input_path.stem}.{target_lang}"
-            ).with_suffix(".srt")
-    else:
-        ctx.update_progress(80)
-
-    ctx.raise_if_cancelled()
-
-    # Stage 4: Generate SRT
-    ctx.update_stage(JobStage.GENERATING_SRT, 80)
-    ctx.add_log(f"Generating SRT file at {output_path}")
-
-    generator = SRTGenerator()
-    generator.generate_from_cues(cues, str(output_path))
-
-    ctx.update_progress(100)
-    ctx.add_log("SRT generated successfully")
-
-    return {
-        "output_path": str(output_path),
-        "segments_count": len(cues),
-        "translated": bool(target_lang and target_lang != source_lang),
+        "wer": result.text_metrics.word_error_rate,
+        "cer": result.text_metrics.character_error_rate,
     }
 
 

@@ -3,38 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
+from .text_utils import format_timestamp
 from .transcription import Segment
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
 
 
-def _format_timestamp(seconds: float) -> str:
-    """
-    Convert a time in seconds to SRT timestamp format: HH:MM:SS,mmm
-
-    Parameters
-    ----------
-    seconds : float
-        Time in seconds (can be fractional).
-
-    Returns
-    -------
-    str
-        Timestamp string in SRT format.
-    """
-    if seconds < 0:
-        seconds = 0.0
-
-    total_ms = int(round(seconds * 1000))
-    hours = total_ms // (3600 * 1000)
-    total_ms %= 3600 * 1000
-    minutes = total_ms // (60 * 1000)
-    total_ms %= 60 * 1000
-    secs = total_ms // 1000
-    ms = total_ms % 1000
-
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+# Backwards-compatible alias for the canonical implementation in text_utils.
+_format_timestamp = format_timestamp
 
 
 def segments_to_srt(segments: Iterable[Segment]) -> str:

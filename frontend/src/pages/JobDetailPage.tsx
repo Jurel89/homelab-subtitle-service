@@ -115,7 +115,7 @@ export function JobDetailPage() {
               Cancel
             </Button>
           )}
-          {(job.status === 'failed' || job.status === 'cancelled') && (
+          {(job.status === 'failed' || job.status === 'canceled') && (
             <Button size="sm" onClick={handleRetry}>
               <RotateCcw className="mr-2 h-4 w-4" />
               Retry
@@ -239,7 +239,48 @@ export function JobDetailPage() {
                 <dt className="flex items-center justify-between text-muted-foreground">
                   Output
                   {job.status === 'done' && (
-                    <Button variant="ghost" size="sm">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          const token = localStorage.getItem('access_token');
+                          const response = await fetch(`/api/jobs/${job.id}/output`, {
+                            headers: token ? { Authorization: `Bearer ${token}` } : {},
+                          });
+
+                          if (!response.ok) {
+                            const errorText = await response.text().catch(() => '');
+                            window.alert(
+                              errorText || `Failed to download output (status ${response.status})`,
+                            );
+                            return;
+                          }
+
+                          // Derive filename from Content-Disposition or output_path
+                          let filename = `${job.id}.srt`;
+                          const disposition = response.headers.get('Content-Disposition');
+                          if (disposition) {
+                            const match = disposition.match(/filename="?([^";\s]+)"?/);
+                            if (match?.[1]) filename = match[1];
+                          } else if (job.output_path) {
+                            const basename = job.output_path.split('/').pop();
+                            if (basename) filename = basename;
+                          }
+
+                          const blob = await response.blob();
+                          const url = window.URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.download = filename;
+                          link.click();
+                          window.URL.revokeObjectURL(url);
+                        } catch (error) {
+                          console.error('Error downloading job output', error);
+                          window.alert('An error occurred while downloading the output.');
+                        }
+                      }}
+                    >
                       <Download className="mr-2 h-4 w-4" />
                       Download
                     </Button>

@@ -100,8 +100,20 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list[str]:
-        """Parse CORS origins from comma-separated string."""
-        return [origin.strip() for origin in self.cors_origins.split(",")]
+        """Parse and validate CORS origins from comma-separated string."""
+        origins = [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        validated = []
+        for origin in origins:
+            if origin == "*":
+                raise ValueError(
+                    "Wildcard '*' is not allowed in CORS_ORIGINS when credentials are enabled"
+                )
+            if not origin.startswith(("http://", "https://")):
+                raise ValueError(
+                    f"Invalid CORS origin: {origin}. Must start with http:// or https://"
+                )
+            validated.append(origin)
+        return validated
 
     @property
     def sync_database_url(self) -> str:

@@ -237,7 +237,7 @@ class ServerJobService:
         job_type: Optional[JobType | str] = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> Sequence[Job]:
+    ) -> tuple[Sequence[Job], int]:
         """
         List jobs with optional filtering.
 
@@ -254,8 +254,8 @@ class ServerJobService:
 
         Returns
         -------
-        Sequence[Job]
-            List of matching jobs.
+        tuple[Sequence[Job], int]
+            List of matching jobs and the total count (before pagination).
         """
         return self._repository.list_jobs(
             status=status,

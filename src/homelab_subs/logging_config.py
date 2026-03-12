@@ -12,6 +12,7 @@ This module provides structured logging with:
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import sys
@@ -196,9 +197,29 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
+_log_context: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
+    "_log_context", default={}
+)
+
+_original_factory = logging.getLogRecordFactory()
+
+
+def _context_record_factory(*args, **kwargs):
+    record = _original_factory(*args, **kwargs)
+    ctx = _log_context.get()
+    for key, value in ctx.items():
+        setattr(record, key, value)
+    return record
+
+
+logging.setLogRecordFactory(_context_record_factory)
+
+
 class LogContext:
     """
     Context manager for adding structured context to log records.
+
+    Uses contextvars for thread safety — each thread/task gets its own context.
 
     Example:
         with LogContext(job_id="job_123", stage="audio_extraction"):
@@ -207,25 +228,15 @@ class LogContext:
 
     def __init__(self, **kwargs):
         self.context = kwargs
-        self.logger_class = logging.getLoggerClass()
 
     def __enter__(self):
-        # Store the old factory
-        self.old_factory = logging.getLogRecordFactory()
-
-        # Create a new factory that adds our context
-        def record_factory(*args, **kwargs):
-            record = self.old_factory(*args, **kwargs)
-            for key, value in self.context.items():
-                setattr(record, key, value)
-            return record
-
-        logging.setLogRecordFactory(record_factory)
+        current = _log_context.get().copy()
+        current.update(self.context)
+        self._token = _log_context.set(current)
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # Restore the old factory
-        logging.setLogRecordFactory(self.old_factory)
+    def __exit__(self, *args):
+        _log_context.reset(self._token)
 
 
 @contextmanager

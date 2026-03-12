@@ -8,18 +8,35 @@ including job creation, status queries, cancellation, and retry operations.
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
+from functools import lru_cache
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query, Depends
+try:
+    _service_version = _pkg_version("homelab-subtitle-service")
+except Exception:
+    _service_version = "0.0.0-dev"
+
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel, Field, ConfigDict
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+from starlette.responses import JSONResponse as StarletteJSONResponse
 
 from homelab_subs.server.settings import get_settings, Settings
 from homelab_subs.server.models import JobStatus, JobType
 from homelab_subs.server.job_service import ServerJobService
+from homelab_subs.server.auth import (
+    get_current_user,
+    get_current_admin_user,
+    TokenData,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +137,9 @@ class JobStatisticsResponse(BaseModel):
     completed: int
     failed: int
     cancelled: int
+    avg_processing_time_seconds: Optional[float] = None
+    jobs_by_type: dict[str, int] = Field(default_factory=dict)
+    jobs_last_24h: int = 0
 
 
 class QueueStatusResponse(BaseModel):
@@ -281,12 +301,16 @@ def get_settings_dep() -> Settings:
     return get_settings()
 
 
-async def get_job_service(
-    settings: Settings = Depends(get_settings_dep),
-) -> ServerJobService:
+@lru_cache(maxsize=1)
+def _create_job_service() -> ServerJobService:
+    """Create a cached ServerJobService instance to avoid connection pool leaks."""
+    settings = get_settings()
+    return ServerJobService(settings)
+
+
+async def get_job_service() -> ServerJobService:
     """Dependency for job service."""
-    service = ServerJobService(settings)
-    return service
+    return _create_job_service()
 
 
 # User and settings repositories - lazy loaded
@@ -334,7 +358,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Homelab Subtitle Service",
         description="API for managing subtitle generation jobs with Whisper transcription, translation, and synchronization",
-        version="0.3.0",
+        version=_service_version,
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
@@ -345,9 +369,21 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
     )
+
+    # Add rate limiting
+    limiter = Limiter(key_func=get_remote_address)
+    app.state.limiter = limiter
+    app.add_middleware(SlowAPIMiddleware)
+
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_handler(request, exc):
+        return StarletteJSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Try again later."},
+        )
 
     return app
 
@@ -372,7 +408,7 @@ async def health_check(service: ServerJobService = Depends(get_job_service)):
 
     try:
         # Check database
-        await service.repository.get_statistics()
+        service.repository.get_statistics()
         db_status = "healthy"
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
@@ -380,7 +416,7 @@ async def health_check(service: ServerJobService = Depends(get_job_service)):
 
     try:
         # Check Redis
-        service.queue_client.get_queue_status()
+        service.queue_client.get_queue_stats()
         redis_status = "healthy"
     except Exception as e:
         logger.error(f"Redis health check failed: {e}")
@@ -396,7 +432,7 @@ async def health_check(service: ServerJobService = Depends(get_job_service)):
         status=overall_status,
         database=db_status,
         redis=redis_status,
-        version="0.3.0",
+        version=_service_version,
     )
 
 
@@ -405,10 +441,21 @@ async def get_statistics(service: ServerJobService = Depends(get_job_service)):
     """
     Get job statistics.
 
-    Returns counts of jobs by status.
+    Returns counts of jobs by status along with pre-aggregated KPI data.
     """
-    stats = await service.get_statistics()
-    return JobStatisticsResponse(**stats)
+    stats = service.repository.get_statistics()
+    status_counts = stats.get("status_counts", {})
+    return JobStatisticsResponse(
+        total_jobs=stats.get("total_jobs", 0),
+        pending=status_counts.get("pending", 0),
+        running=status_counts.get("running", 0),
+        completed=status_counts.get("done", 0),
+        failed=status_counts.get("failed", 0),
+        cancelled=status_counts.get("canceled", 0),
+        avg_processing_time_seconds=stats.get("avg_processing_time_seconds"),
+        jobs_by_type=stats.get("jobs_by_type", {}),
+        jobs_last_24h=stats.get("jobs_last_24h", 0),
+    )
 
 
 @app.get("/queue/status", response_model=QueueStatusResponse, tags=["System"])
@@ -436,6 +483,7 @@ async def get_queue_status(service: ServerJobService = Depends(get_job_service))
 )
 async def create_job(
     request: JobCreateRequest,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -458,9 +506,12 @@ async def create_job(
             status_code=400,
             detail=f"Input file not found: {request.input_path}",
         )
+    _validate_path_in_media_folders(input_path)
+    if request.output_path:
+        _validate_path_in_media_folders(Path(request.output_path).parent)
 
     # Validate reference path for jobs that need it
-    if request.type in [JobType.SYNC, JobType.COMPARE]:
+    if request.type in [JobType.SYNC_SUBTITLE, JobType.COMPARE]:
         if not request.reference_path:
             raise HTTPException(
                 status_code=400,
@@ -480,14 +531,14 @@ async def create_job(
         )
 
     try:
-        job = await service.create_job(
+        job = service.create_job(
             job_type=request.type,
-            input_path=request.input_path,
+            source_path=request.input_path,
             output_path=request.output_path,
-            reference_path=request.reference_path,
-            source_language=request.source_language,
+            subtitle_path=request.reference_path,
+            language=request.source_language or "en",
             target_language=request.target_language,
-            model_size=request.model_size,
+            model_name=request.model_size,
             compute_type=request.compute_type,
             priority=request.priority,
             options=request.options,
@@ -506,6 +557,7 @@ async def list_jobs(
     ),
     page: int = Query(default=1, ge=1, description="Page number"),
     page_size: int = Query(default=20, ge=1, le=100, description="Items per page"),
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -515,7 +567,7 @@ async def list_jobs(
     """
     offset = (page - 1) * page_size
 
-    jobs, total = await service.list_jobs(
+    jobs, total = service.list_jobs(
         status=status,
         job_type=job_type,
         limit=page_size + 1,  # Fetch one extra to check for more
@@ -543,6 +595,7 @@ async def list_jobs(
 )
 async def get_job(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -550,7 +603,7 @@ async def get_job(
 
     Returns full job information including progress, stage, and any errors.
     """
-    job = await service.get_job(str(job_id))
+    job = service.get_job(str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
@@ -565,6 +618,7 @@ async def get_job(
 )
 async def get_job_logs(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -572,15 +626,15 @@ async def get_job_logs(
 
     Returns the accumulated logs from job processing.
     """
-    job = await service.get_job(str(job_id))
+    job = service.get_job(str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
     return JobLogsResponse(
         job_id=job_id,
-        logs=job.logs,
-        status=job.status.value if hasattr(job.status, "value") else str(job.status),
-        stage=job.stage.value if hasattr(job.stage, "value") else str(job.stage),
+        logs=job.error_message,
+        status=job.status.value,
+        stage=job.current_stage.value,
     )
 
 
@@ -594,6 +648,7 @@ async def get_job_logs(
 )
 async def download_output(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -601,11 +656,11 @@ async def download_output(
 
     Returns the generated SRT file or comparison report.
     """
-    job = await service.get_job(str(job_id))
+    job = service.get_job(str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
-    if job.status != JobStatus.COMPLETED:
+    if job.status != JobStatus.DONE:
         raise HTTPException(
             status_code=400,
             detail=f"Job is not completed (status: {job.status})",
@@ -647,6 +702,7 @@ async def download_output(
 )
 async def cancel_job(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -656,7 +712,7 @@ async def cancel_job(
     stage before stopping.
     """
     try:
-        job = await service.cancel_job(str(job_id))
+        job = service.cancel_job(str(job_id))
         return _job_to_response(job)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -675,6 +731,7 @@ async def cancel_job(
 )
 async def retry_job(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -683,7 +740,7 @@ async def retry_job(
     Creates a new job with the same parameters and queues it for processing.
     """
     try:
-        job = await service.retry_job(str(job_id))
+        job = service.retry_job(str(job_id))
         return _job_to_response(job)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -702,6 +759,7 @@ async def retry_job(
 )
 async def delete_job(
     job_id: UUID,
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -709,7 +767,7 @@ async def delete_job(
 
     Only completed, failed, or cancelled jobs can be deleted.
     """
-    job = await service.get_job(str(job_id))
+    job = service.get_job(str(job_id))
     if not job:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
@@ -719,7 +777,7 @@ async def delete_job(
             detail=f"Cannot delete job with status: {job.status}. Cancel it first.",
         )
 
-    await service.repository.delete(str(job_id))
+    service.repository.delete(str(job_id))
     return None
 
 
@@ -737,6 +795,7 @@ async def delete_job(
 )
 async def create_batch_jobs(
     requests: list[JobCreateRequest],
+    current_user: TokenData = Depends(get_current_user),
     service: ServerJobService = Depends(get_job_service),
 ):
     """
@@ -758,18 +817,21 @@ async def create_batch_jobs(
                 status_code=400,
                 detail=f"Job {i}: Input file not found: {req.input_path}",
             )
+        _validate_path_in_media_folders(Path(req.input_path))
+        if req.output_path:
+            _validate_path_in_media_folders(Path(req.output_path).parent)
 
     # Create all jobs
     jobs = []
     for req in requests:
-        job = await service.create_job(
+        job = service.create_job(
             job_type=req.type,
-            input_path=req.input_path,
+            source_path=req.input_path,
             output_path=req.output_path,
-            reference_path=req.reference_path,
-            source_language=req.source_language,
+            subtitle_path=req.reference_path,
+            language=req.source_language or "en",
             target_language=req.target_language,
-            model_size=req.model_size,
+            model_name=req.model_size,
             compute_type=req.compute_type,
             priority=req.priority,
             options=req.options,
@@ -784,26 +846,46 @@ async def create_batch_jobs(
 # =============================================================================
 
 
+def _validate_path_in_media_folders(path: Path) -> None:
+    """Raise HTTPException(403) if path is not inside a configured media folder."""
+    resolved = path.resolve()
+    settings_repo = get_settings_repository()
+    global_settings = settings_repo.get_settings()
+    media_folders = global_settings.media_folders if global_settings else []
+    if not media_folders:
+        return  # No restrictions configured
+    for folder in media_folders:
+        try:
+            resolved.relative_to(Path(folder).resolve())
+            return
+        except ValueError:
+            continue
+    raise HTTPException(
+        status_code=403,
+        detail=f"Path '{path}' is not within any configured media folder",
+    )
+
+
 def _job_to_response(job) -> JobResponse:
     """Convert a Job model to a JobResponse."""
     return JobResponse(
         id=job.id,
-        type=job.type.value if hasattr(job.type, "value") else str(job.type),
-        status=job.status.value if hasattr(job.status, "value") else str(job.status),
-        stage=job.stage.value if hasattr(job.stage, "value") else str(job.stage),
+        type=job.type.value,
+        status=job.status.value,
+        stage=job.current_stage.value,
         progress=job.progress,
-        input_path=job.input_path,
+        input_path=job.source_path,
         output_path=job.output_path,
-        reference_path=job.reference_path,
-        source_language=job.source_language,
+        reference_path=job.subtitle_path,
+        source_language=job.language,
         target_language=job.target_language,
-        model_size=job.model_size,
+        model_size=job.model_name,
         compute_type=job.compute_type,
         error_message=job.error_message,
         created_at=job.created_at,
-        updated_at=job.updated_at,
+        updated_at=job.finished_at or job.started_at or job.created_at,
         started_at=job.started_at,
-        completed_at=job.completed_at,
+        completed_at=job.finished_at,
     )
 
 
@@ -838,7 +920,8 @@ async def check_setup_status():
 
 
 @app.post("/auth/register", response_model=TokenResponse, tags=["Authentication"])
-async def register_user(request: RegisterRequest):
+@app.state.limiter.limit("3/minute")
+async def register_user(request: Request, body: RegisterRequest):
     """
     Register a new user (first-time setup only).
 
@@ -848,6 +931,7 @@ async def register_user(request: RegisterRequest):
     from homelab_subs.server.auth import (
         create_token_pair,
         PasswordValidationError,
+        validate_password_strength,
     )
 
     try:
@@ -860,10 +944,15 @@ async def register_user(request: RegisterRequest):
                 detail="Registration not allowed. Users already exist.",
             )
 
+        # Validate password strength
+        password_errors = validate_password_strength(body.password)
+        if password_errors:
+            raise HTTPException(status_code=400, detail={"errors": password_errors})
+
         # Create the admin user
         user = user_repo.create_user(
-            username=request.username,
-            password=request.password,
+            username=body.username,
+            password=body.password,
             is_admin=True,
         )
 
@@ -872,6 +961,7 @@ async def register_user(request: RegisterRequest):
             user_id=user.id,
             username=user.username,
             is_admin=user.is_admin,
+            token_version=user.token_version,
         )
 
         logger.info(f"Admin user '{user.username}' registered successfully")
@@ -893,7 +983,8 @@ async def register_user(request: RegisterRequest):
 
 
 @app.post("/auth/login", response_model=TokenResponse, tags=["Authentication"])
-async def login(request: LoginRequest):
+@app.state.limiter.limit("5/minute")
+async def login(request: Request, body: LoginRequest):
     """
     Authenticate and receive access tokens.
 
@@ -905,8 +996,8 @@ async def login(request: LoginRequest):
         user_repo = get_user_repository()
 
         user = user_repo.authenticate(
-            username=request.username,
-            password=request.password,
+            username=body.username,
+            password=body.password,
         )
 
         if user is None:
@@ -920,6 +1011,7 @@ async def login(request: LoginRequest):
             user_id=user.id,
             username=user.username,
             is_admin=user.is_admin,
+            token_version=user.token_version,
         )
 
         return TokenResponse(
@@ -944,7 +1036,11 @@ async def refresh_token(request: RefreshRequest):
     Use this when the access token has expired but the refresh token
     is still valid.
     """
-    from homelab_subs.server.auth import validate_refresh_token, create_token_pair
+    from homelab_subs.server.auth import (
+        validate_refresh_token,
+        create_token_pair,
+        decode_token,
+    )
 
     try:
         user_id = validate_refresh_token(request.refresh_token)
@@ -964,11 +1060,20 @@ async def refresh_token(request: RefreshRequest):
                 detail="User not found or inactive",
             )
 
+        # Verify token version to ensure refresh token hasn't been revoked
+        payload = decode_token(request.refresh_token)
+        if payload is not None and payload.get("token_version") != user.token_version:
+            raise HTTPException(
+                status_code=401,
+                detail="Refresh token has been revoked",
+            )
+
         # Generate new tokens
         tokens = create_token_pair(
             user_id=user.id,
             username=user.username,
             is_admin=user.is_admin,
+            token_version=user.token_version,
         )
 
         return TokenResponse(
@@ -986,35 +1091,93 @@ async def refresh_token(request: RefreshRequest):
 
 
 @app.get("/auth/me", response_model=UserResponse, tags=["Authentication"])
-async def get_current_user_info():
+async def get_current_user_info(
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Get current user information.
 
     Requires authentication.
     """
+    try:
+        user_repo = get_user_repository()
+        user = user_repo.get_user_by_id(current_user.user_id)
 
-    # Get credentials from header
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    # Note: This is a simplified version. In production, use proper dependency
-    # For now, we return the authenticated user's info
-    raise HTTPException(
-        status_code=501,
-        detail="Use Authorization header with Bearer token",
-    )
+        return UserResponse(
+            id=user.id,
+            username=user.username,
+            is_admin=user.is_admin,
+            is_active=user.is_active,
+            created_at=user.created_at,
+            last_login=user.last_login,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user info: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user info")
 
 
 @app.post("/auth/change-password", tags=["Authentication"])
-async def change_password(request: ChangePasswordRequest):
+async def change_password(
+    request: ChangePasswordRequest,
+    current_user: TokenData = Depends(get_current_user),
+):
     """
     Change the current user's password.
 
     Requires authentication with the current password.
     """
-    # This endpoint needs to be protected and verify current password
-    raise HTTPException(
-        status_code=501,
-        detail="Endpoint not yet implemented - requires auth dependency",
-    )
+    from homelab_subs.server.auth import verify_password, validate_password_strength
+
+    try:
+        user_repo = get_user_repository()
+        user = user_repo.get_user_by_id(current_user.user_id)
+
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Verify current password
+        if not verify_password(request.current_password, user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+        # Validate new password strength
+        password_errors = validate_password_strength(request.new_password)
+        if password_errors:
+            raise HTTPException(status_code=400, detail={"errors": password_errors})
+
+        # Update password
+        user_repo.update_password(current_user.user_id, request.new_password)
+
+        # Revoke all existing tokens by incrementing token version
+        user_repo.increment_token_version(current_user.user_id)
+
+        return {"detail": "Password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to change password: {e}")
+        raise HTTPException(status_code=500, detail="Failed to change password")
+
+
+@app.post("/auth/logout", tags=["Authentication"])
+async def logout(current_user: TokenData = Depends(get_current_user)):
+    """
+    Log out the current user by revoking all existing tokens.
+
+    Increments the user's token version, which invalidates all
+    previously issued access and refresh tokens.
+    """
+    try:
+        user_repo = get_user_repository()
+        user_repo.increment_token_version(current_user.user_id)
+        return {"detail": "Logged out successfully"}
+    except Exception as e:
+        logger.error(f"Failed to logout: {e}")
+        raise HTTPException(status_code=500, detail="Failed to logout")
 
 
 # =============================================================================
@@ -1023,11 +1186,13 @@ async def change_password(request: ChangePasswordRequest):
 
 
 @app.get("/settings", response_model=SettingsResponse, tags=["Settings"])
-async def get_global_settings():
+async def get_global_settings(
+    current_user: TokenData = Depends(get_current_admin_user),
+):
     """
     Get current global settings.
 
-    Note: In production, this should require authentication.
+    Requires admin authentication.
     """
     try:
         settings_repo = get_settings_repository()
@@ -1052,11 +1217,14 @@ async def get_global_settings():
 
 
 @app.put("/settings", response_model=SettingsResponse, tags=["Settings"])
-async def update_global_settings(request: SettingsUpdateRequest):
+async def update_global_settings(
+    request: SettingsUpdateRequest,
+    current_user: TokenData = Depends(get_current_admin_user),
+):
     """
     Update global settings.
 
-    Note: In production, this should require admin authentication.
+    Requires admin authentication.
     """
     try:
         settings_repo = get_settings_repository()
@@ -1107,6 +1275,7 @@ async def browse_files(
         default=False,
         description="Whether to show hidden files (starting with .)",
     ),
+    current_user: TokenData = Depends(get_current_user),
 ):
     """
     Browse files and directories within configured media folders.
@@ -1114,10 +1283,8 @@ async def browse_files(
     Security: Only allows browsing within configured media_folders.
     Cannot escape to parent directories outside allowed paths.
 
-    Note: In production, this should require authentication.
+    Requires authentication.
     """
-    from datetime import datetime
-
     try:
         settings_repo = get_settings_repository()
         settings = settings_repo.get_settings()

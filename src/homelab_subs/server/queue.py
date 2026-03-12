@@ -165,10 +165,12 @@ class QueueClient:
         if retry_count > 0:
             retry = Retry(max=retry_count, interval=retry_interval)
 
-        # Enqueue the job
+        # Enqueue the job — pass DB job_id as positional arg to worker function,
+        # and set the RQ job ID separately via the reserved job_id kwarg.
         rq_job = queue.enqueue(
             func,
-            job_id=f"subsvc:{job_id}",  # Use predictable RQ job ID
+            job_id,  # Positional arg passed to process_job(job_id)
+            job_id=f"subsvc:{job_id}",  # Sets the RQ job ID (reserved kwarg)
             **kwargs,
             job_timeout=timeout,
             result_ttl=result_ttl,

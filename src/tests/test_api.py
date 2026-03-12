@@ -444,3 +444,43 @@ class TestJobLogsSchema:
 
         assert response.logs is not None
         assert "Processing" in response.logs
+
+
+def test_health_check(test_client):
+    response = test_client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert "status" in data
+    assert "version" in data
+
+
+def test_create_job_nonexistent_path(test_client):
+    response = test_client.post(
+        "/jobs",
+        json={
+            "input_path": "/nonexistent/video.mp4",
+            "type": "transcribe",
+        },
+    )
+    assert response.status_code in (
+        400,
+        401,
+        422,
+    )  # 401 if auth enforced, 400/422 otherwise
+
+
+def test_get_nonexistent_job(test_client):
+    response = test_client.get("/jobs/00000000-0000-0000-0000-000000000000")
+    assert response.status_code in (404, 401)
+
+
+class TestFilesBrowserSecurity:
+    def test_path_outside_media_folders_returns_403(self, test_client):
+        response = test_client.get("/files", params={"path": "/etc"})
+        assert response.status_code in (403, 401)
+
+    def test_path_traversal_with_dotdot_returns_403(self, test_client):
+        response = test_client.get(
+            "/files", params={"path": "/allowed/../../../etc/passwd"}
+        )
+        assert response.status_code in (403, 401)

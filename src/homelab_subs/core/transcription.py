@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Literal, Optional
+from typing import Callable, Literal, Optional
 
 from faster_whisper import WhisperModel
 
@@ -206,30 +206,3 @@ class Transcriber:
         logger.info(f"Transcription complete: {len(segments)} segments generated")
 
         return segments
-
-    # ---------- helpers for shaping output ----------
-
-    def _segments_from_iterable(self, segments_iter: Iterable) -> Iterable[Segment]:
-        """
-        Convert faster-whisper segments into our Segment dataclass objects.
-        """
-        segment_count = 0
-        for idx, seg in enumerate(segments_iter, start=1):
-            # `seg` is a faster_whisper.transcribe.Segment object
-            # with attributes: start, end, text, avg_logprob, no_speech_prob, etc.
-            segment_count += 1
-            if segment_count % 50 == 0:
-                logger.debug(f"Processed {segment_count} segments...")
-
-            yield Segment(
-                index=idx,
-                start=float(seg.start),
-                end=float(seg.end),
-                text=seg.text.strip(),
-                avg_logprob=getattr(seg, "avg_logprob", None),
-                no_speech_prob=getattr(seg, "no_speech_prob", None),
-            )
-
-
-# A convenient default instance that most of the codebase can use
-default_transcriber = Transcriber()

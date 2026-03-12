@@ -15,36 +15,25 @@ video release).
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable, Optional
 
 from .audio import FFmpeg
+from .text_utils import (
+    normalize_text,
+    format_timestamp,
+    SubtitleCue,
+    parse_srt_content,
+    _timestamp_to_seconds,  # noqa: F401  # re-exported for backward compat
+)
 from .transcription import Segment, Transcriber, TranscriberConfig
 from ..logging_config import get_logger, log_stage
 
 logger = get_logger(__name__)
 
 ProgressCallback = Optional[Callable[[float, int], None]]
-
-
-@dataclass
-class SubtitleCue:
-    """
-    Represents a single subtitle cue with timing information.
-    """
-
-    index: int
-    start_seconds: float
-    end_seconds: float
-    text: str
-
-    @property
-    def duration(self) -> float:
-        """Duration of the cue in seconds."""
-        return self.end_seconds - self.start_seconds
 
 
 @dataclass
@@ -111,84 +100,9 @@ class SyncResult:
     max_offset_seconds: float
 
 
-def _timestamp_to_seconds(timestamp: str) -> float:
-    """
-    Convert SRT timestamp (HH:MM:SS,mmm) to seconds.
-
-    Parameters
-    ----------
-    timestamp : str
-        Timestamp in format "HH:MM:SS,mmm" or "HH:MM:SS.mmm"
-
-    Returns
-    -------
-    float
-        Time in seconds.
-    """
-    # Handle both comma and dot as millisecond separator
-    timestamp = timestamp.replace(",", ".")
-
-    match = re.match(r"(\d{2}):(\d{2}):(\d{2})\.(\d{3})", timestamp)
-    if not match:
-        raise ValueError(f"Invalid timestamp format: {timestamp}")
-
-    hours, minutes, seconds, ms = map(int, match.groups())
-    return hours * 3600 + minutes * 60 + seconds + ms / 1000
-
-
-def _seconds_to_timestamp(seconds: float) -> str:
-    """
-    Convert seconds to SRT timestamp format (HH:MM:SS,mmm).
-
-    Parameters
-    ----------
-    seconds : float
-        Time in seconds.
-
-    Returns
-    -------
-    str
-        Timestamp in SRT format.
-    """
-    if seconds < 0:
-        seconds = 0.0
-
-    total_ms = int(round(seconds * 1000))
-    hours = total_ms // (3600 * 1000)
-    total_ms %= 3600 * 1000
-    minutes = total_ms // (60 * 1000)
-    total_ms %= 60 * 1000
-    secs = total_ms // 1000
-    ms = total_ms % 1000
-
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
-
-
-def _normalize_text(text: str) -> str:
-    """
-    Normalize text for comparison by removing punctuation and extra whitespace.
-
-    Parameters
-    ----------
-    text : str
-        Original text.
-
-    Returns
-    -------
-    str
-        Normalized lowercase text.
-    """
-    # Remove common subtitle formatting tags
-    text = re.sub(r"<[^>]+>", "", text)  # HTML-like tags
-    text = re.sub(r"\{[^}]+\}", "", text)  # ASS-style tags
-
-    # Remove punctuation except apostrophes (important for contractions)
-    text = re.sub(r"[^\w\s']", " ", text)
-
-    # Normalize whitespace and lowercase
-    text = " ".join(text.lower().split())
-
-    return text
+# Backwards-compatible aliases for the canonical implementations in text_utils.
+_seconds_to_timestamp = format_timestamp
+_normalize_text = normalize_text
 
 
 def _text_similarity(text1: str, text2: str) -> float:
@@ -246,69 +160,8 @@ def parse_srt_file(srt_path: Path, encoding: str = "utf-8") -> list[SubtitleCue]
     return parse_srt_content(content)
 
 
-def parse_srt_content(content: str) -> list[SubtitleCue]:
-    """
-    Parse SRT content string into a list of SubtitleCue objects.
-
-    Parameters
-    ----------
-    content : str
-        SRT file content.
-
-    Returns
-    -------
-    list[SubtitleCue]
-        List of parsed subtitle cues.
-    """
-    cues: list[SubtitleCue] = []
-
-    # Normalize line endings
-    content = content.replace("\r\n", "\n")
-
-    # Split into blocks (separated by blank lines)
-    blocks = re.split(r"\n\n+", content.strip())
-
-    for block in blocks:
-        lines = block.strip().split("\n")
-        if len(lines) < 3:
-            continue
-
-        # Parse index
-        try:
-            index = int(lines[0].strip())
-        except ValueError:
-            logger.warning(f"Skipping invalid subtitle index: {lines[0]}")
-            continue
-
-        # Parse timestamp line
-        timestamp_match = re.match(
-            r"(\d{2}:\d{2}:\d{2}[,\.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,\.]\d{3})",
-            lines[1].strip(),
-        )
-        if not timestamp_match:
-            logger.warning(f"Skipping invalid timestamp: {lines[1]}")
-            continue
-
-        try:
-            start_seconds = _timestamp_to_seconds(timestamp_match.group(1))
-            end_seconds = _timestamp_to_seconds(timestamp_match.group(2))
-        except ValueError as e:
-            logger.warning(f"Skipping cue with invalid timestamp: {e}")
-            continue
-
-        # Remaining lines are the subtitle text
-        text = "\n".join(lines[2:]).strip()
-
-        cues.append(
-            SubtitleCue(
-                index=index,
-                start_seconds=start_seconds,
-                end_seconds=end_seconds,
-                text=text,
-            )
-        )
-
-    return cues
+# parse_srt_content is re-exported from text_utils for backward compatibility.
+# Callers that imported it from this module continue to work.
 
 
 def write_srt_from_cues(
