@@ -16,6 +16,7 @@ from typing import Any, Generator, Optional, Sequence
 
 try:
     from sqlalchemy import create_engine, select, desc, and_
+    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm import Session, sessionmaker
 
     SQLALCHEMY_AVAILABLE = True
@@ -727,28 +728,26 @@ class UserRepository:
         # Validate password strength
         validate_password_strength(password)
 
-        # Hash the password
-        password_hash = hash_password(password)
-
-        user = User(
-            username=username,
-            password_hash=password_hash,
-            is_admin=is_admin,
-            is_active=True,
-        )
-
         with self.session() as session:
-            # Check if username exists
-            existing = session.scalar(select(User).where(User.username == username))
-            if existing:
-                raise ValueError(f"Username '{username}' already exists")
+            if is_admin and self.has_any_users():
+                raise ValueError("Registration not allowed: admin user already exists")
 
+            hashed = hash_password(password)
+            user = User(
+                username=username,
+                password_hash=hashed,
+                is_admin=is_admin,
+                is_active=True,
+            )
             session.add(user)
-            session.flush()
-            user_id = user.id
-
-        logger.info(f"Created user '{username}' (admin={is_admin})")
-        return self.get_user_by_id(user_id)
+            try:
+                session.flush()
+            except IntegrityError:
+                session.rollback()
+                raise ValueError(f"Username '{username}' already exists")
+            session.commit()
+            session.refresh(user)
+            return user
 
     def get_user_by_id(self, user_id: uuid.UUID | str) -> Optional[User]:
         """Get a user by their ID."""
