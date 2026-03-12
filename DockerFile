@@ -21,6 +21,11 @@ COPY src ./src
 RUN pip install --no-cache-dir --upgrade pip==25.0.1 \
     && pip install --no-cache-dir .
 
+# Create non-root user and set permissions
+RUN groupadd -r appuser && useradd -r -g appuser -d /app appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 # Default entrypoint is the CLI
 ENTRYPOINT ["subsvc"]
 # Default command: show help if no args
