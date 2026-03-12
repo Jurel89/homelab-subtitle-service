@@ -16,7 +16,11 @@ from .services.job_service import JobService
 
 logger = get_logger(__name__)
 
-__version__ = "0.3.0"
+from importlib.metadata import version as _pkg_version
+try:
+    __version__ = _pkg_version("homelab-subtitle-service")
+except Exception:
+    __version__ = "0.0.0-dev"
 
 # ASCII Art Logo
 LOGO = r"""

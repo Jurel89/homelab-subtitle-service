@@ -9,9 +9,15 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import lru_cache
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
+
+try:
+    _service_version = _pkg_version("homelab-subtitle-service")
+except Exception:
+    _service_version = "0.0.0-dev"
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -349,7 +355,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Homelab Subtitle Service",
         description="API for managing subtitle generation jobs with Whisper transcription, translation, and synchronization",
-        version="0.3.0",
+        version=_service_version,
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
@@ -423,7 +429,7 @@ async def health_check(service: ServerJobService = Depends(get_job_service)):
         status=overall_status,
         database=db_status,
         redis=redis_status,
-        version="0.3.0",
+        version=_service_version,
     )
 
 
