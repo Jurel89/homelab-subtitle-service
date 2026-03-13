@@ -447,6 +447,11 @@ def main():
         default=5000,
         help="Port to bind to (default: 5000)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable Flask debug mode (not for production use)",
+    )
 
     args = parser.parse_args()
 
@@ -460,7 +465,7 @@ def main():
     print(f"API Jobs: http://{args.host}:{args.port}/api/jobs")
     print("\nPress Ctrl+C to stop")
 
-    app.run(host=args.host, port=args.port, debug=True)
+    app.run(host=args.host, port=args.port, debug=args.debug)
 
 
 if __name__ == "__main__":
